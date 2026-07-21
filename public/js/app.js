@@ -1,4 +1,5 @@
 import { PriceChart, CHART_COLORS } from './chart.js';
+import { ema, sma } from './indicators.js';
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -670,6 +671,18 @@ function initAnalyst() {
   $('#analyst-query').addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') runAnalysis();
   });
+
+  // Delegated clicks for occurrence rows (open chart / remove / restore).
+  $('#analyst-results').addEventListener('click', onResultsClick);
+
+  // Occurrence modal controls.
+  $('#occ-close').addEventListener('click', closeOccurrence);
+  $('#occ-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'occ-modal') closeOccurrence();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#occ-modal').hidden) closeOccurrence();
+  });
 }
 
 async function runAnalysis() {
@@ -700,143 +713,283 @@ async function runAnalysis() {
   }
 }
 
+// Current analysis + the set of occurrence ids the user has removed.
+const analysis = { res: null, removed: new Set() };
+const EV_DISPLAY_CAP = 300;
+
 function renderAnalysis(res) {
+  analysis.res = res;
+  analysis.removed = new Set();
+  renderResults();
+}
+
+function activeEvents() {
+  return analysis.res.events.filter((e) => !analysis.removed.has(e.id));
+}
+
+// Same aggregation the server used, run client-side so removals recompute live.
+function summarizeReturns(rets) {
+  const n = rets.length;
+  if (n === 0) return { n: 0 };
+  const ups = rets.filter((r) => r > 0);
+  const downs = rets.filter((r) => r < 0);
+  const s = [...rets].sort((a, b) => a - b);
+  const median = s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  return {
+    n,
+    pctUp: (ups.length / n) * 100,
+    avgUp: ups.length ? ups.reduce((a, b) => a + b, 0) / ups.length : 0,
+    pctDown: (downs.length / n) * 100,
+    avgDown: downs.length ? downs.reduce((a, b) => a + b, 0) / downs.length : 0,
+    avg: rets.reduce((a, b) => a + b, 0) / n,
+    median,
+    best: Math.max(...rets),
+    worst: Math.min(...rets),
+  };
+}
+
+function computeHorizonStats(events, horizons) {
+  return horizons.map((h) => ({
+    days: h,
+    ...summarizeReturns(events.map((e) => e.returns[h]).filter((r) => r != null)),
+  }));
+}
+
+function renderResults() {
+  const res = analysis.res;
   const out = $('#analyst-results');
   const parts = [];
+  const removedCount = analysis.removed.size;
 
   parts.push(
     `<div class="interp"><span class="interp-label">Interpreted as</span><br/>${escapeHtml(res.interpretation)}</div>`
   );
-
   if (res.warnings && res.warnings.length) {
     parts.push(`<div class="warn-box">${res.warnings.map((w) => `<div>⚠︎ ${escapeHtml(w)}</div>`).join('')}</div>`);
   }
 
-  if (res.universe.symbol) {
-    parts.push(
-      `<div class="universe-note">Analyzed <b>${escapeHtml(res.universe.symbol)}</b> over the window · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}.</div>`
-    );
-  } else {
-    parts.push(
-      `<div class="universe-note">Scanned <b>${res.universe.symbolsWithData}</b> of ${res.universe.symbolsRequested} ${escapeHtml(
-        res.universe.label
-      )} stocks · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}.</div>`
-    );
-  }
-
-  const primary = res.horizonStats.find((h) => h.days === res.primaryHorizon) || res.horizonStats[0];
-
-  if (!res.triggers || !primary || !primary.n) {
-    parts.push(
-      '<div class="no-results">No occurrences of this scenario were found in the selected window. Try loosening the conditions or widening the time period.</div>'
-    );
-    out.innerHTML = parts.join('');
-    return;
-  }
-
-  // Headline verdict (primary horizon)
-  parts.push(`
-    <div class="verdict">
-      <div class="verdict-side up">
-        <div class="verdict-pct">${pctOnly(primary.pctUp)}</div>
-        <div class="verdict-cap">of the time it <b>rose</b> over the next ${primary.days} trading days</div>
-        <div class="verdict-move up">average gain ${sPct(primary.avgUp)}</div>
-      </div>
-      <div class="verdict-side down">
-        <div class="verdict-pct">${pctOnly(primary.pctDown)}</div>
-        <div class="verdict-cap">of the time it <b>fell</b> over the next ${primary.days} trading days</div>
-        <div class="verdict-move down">average drop ${sPct(primary.avgDown)}</div>
-      </div>
-    </div>`);
-
-  // Up/down proportion bar
-  const upW = primary.pctUp || 0;
+  const scopeNote = res.universe.symbol
+    ? `Analyzed <b>${escapeHtml(res.universe.symbol)}</b> over the window`
+    : `Scanned <b>${res.universe.symbolsWithData}</b> of ${res.universe.symbolsRequested} ${escapeHtml(res.universe.label)} stocks`;
+  const removedTxt = removedCount
+    ? ` · <span class="removed-note">${removedCount} removed <button class="restore-removed">restore all</button></span>`
+    : '';
   parts.push(
-    `<div class="updown-bar"><div class="seg-up" style="width:${upW}%"></div><div class="seg-down" style="width:${100 - upW}%"></div></div>`
+    `<div class="universe-note">${scopeNote} · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}${removedTxt}.</div>`
   );
 
-  // Plain-English summary
-  const avgClass = primary.avg >= 0 ? 'up' : 'down';
-  parts.push(`
-    <div class="summary-line">
-      Across <b>${primary.n}</b> historical occurrences, the average move over the next
-      ${primary.days} trading days was <b class="${avgClass}">${sPct(primary.avg)}</b>
-      (median ${sPct(primary.median)}). Best case <b class="up">${sPct(primary.best)}</b>,
-      worst case <b class="down">${sPct(primary.worst)}</b>.
-    </div>`);
+  const events = activeEvents();
+  const horizons = res.horizons || [1, 5, 10, 20];
+  const stats = computeHorizonStats(events, horizons);
+  const primary = stats.find((h) => h.days === res.primaryHorizon) || stats[0];
 
-  // Horizon breakdown table
-  const rows = res.horizonStats
-    .filter((h) => h.n)
-    .map(
-      (h) => `
-      <tr class="${h.days === res.primaryHorizon ? 'primary' : ''}">
-        <td>${h.days}d</td>
-        <td>${h.n}</td>
-        <td class="up">${pctOnly(h.pctUp)}</td>
-        <td class="up">${sPct(h.avgUp)}</td>
-        <td class="down">${pctOnly(h.pctDown)}</td>
-        <td class="down">${sPct(h.avgDown)}</td>
-        <td class="${h.avg >= 0 ? 'up' : 'down'}">${sPct(h.avg)}</td>
-        <td>${sPct(h.median)}</td>
-      </tr>`
-    )
-    .join('');
-  parts.push(`
-    <div class="result-block">
-      <h3>Outcome by forward horizon</h3>
-      <div style="overflow-x:auto">
-      <table class="h-table">
-        <thead><tr>
-          <th>Horizon</th><th>Occurrences</th><th>% up</th><th>Avg gain</th>
-          <th>% down</th><th>Avg drop</th><th>Avg move</th><th>Median</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      </div>
-    </div>`);
-
-  // Top contributors (only meaningful across a multi-stock universe)
-  if (!res.universe.symbol && res.bySymbol && res.bySymbol.length) {
+  if (primary && primary.n) {
+    const upW = primary.pctUp || 0;
+    const avgClass = primary.avg >= 0 ? 'up' : 'down';
     parts.push(`
-      <div class="result-block">
-        <h3>Which stocks triggered most</h3>
-        <div class="chip-row">
-          ${res.bySymbol.slice(0, 20).map((s) => `<span class="sym-chip"><b>${s.symbol}</b> ${s.count}</span>`).join('')}
+      <div class="verdict">
+        <div class="verdict-side up">
+          <div class="verdict-pct">${pctOnly(primary.pctUp)}</div>
+          <div class="verdict-cap">of the time it <b>rose</b> over the next ${primary.days} trading days</div>
+          <div class="verdict-move up">average gain ${sPct(primary.avgUp)}</div>
         </div>
+        <div class="verdict-side down">
+          <div class="verdict-pct">${pctOnly(primary.pctDown)}</div>
+          <div class="verdict-cap">of the time it <b>fell</b> over the next ${primary.days} trading days</div>
+          <div class="verdict-move down">average drop ${sPct(primary.avgDown)}</div>
+        </div>
+      </div>
+      <div class="updown-bar"><div class="seg-up" style="width:${upW}%"></div><div class="seg-down" style="width:${100 - upW}%"></div></div>
+      <div class="summary-line">
+        Across <b>${primary.n}</b> occurrences${removedCount ? ` (after removing ${removedCount})` : ''}, the average move over the next
+        ${primary.days} trading days was <b class="${avgClass}">${sPct(primary.avg)}</b>
+        (median ${sPct(primary.median)}). Best case <b class="up">${sPct(primary.best)}</b>,
+        worst case <b class="down">${sPct(primary.worst)}</b>.
       </div>`);
-  }
 
-  // Sample events
-  if (res.sample && res.sample.length) {
-    const evRows = res.sample
+    const rows = stats
+      .filter((h) => h.n)
       .map(
-        (e) => `
-        <tr>
-          <td>${e.date}</td>
-          <td>${e.symbol}</td>
-          <td>${usd(e.entry)}</td>
-          <td class="${e.primaryReturn >= 0 ? 'up' : 'down'}">${sPct(e.primaryReturn)}</td>
+        (h) => `
+        <tr class="${h.days === res.primaryHorizon ? 'primary' : ''}">
+          <td>${h.days}d</td><td>${h.n}</td>
+          <td class="up">${pctOnly(h.pctUp)}</td><td class="up">${sPct(h.avgUp)}</td>
+          <td class="down">${pctOnly(h.pctDown)}</td><td class="down">${sPct(h.avgDown)}</td>
+          <td class="${h.avg >= 0 ? 'up' : 'down'}">${sPct(h.avg)}</td><td>${sPct(h.median)}</td>
         </tr>`
       )
       .join('');
     parts.push(`
       <div class="result-block">
-        <h3>Recent occurrences (return over ${res.primaryHorizon} days)</h3>
-        <div class="ev-scroll" style="overflow-x:auto">
-        <table class="ev-table">
-          <thead><tr><th>Date</th><th>Symbol</th><th>Entry</th><th>${res.primaryHorizon}d return</th></tr></thead>
-          <tbody>${evRows}</tbody>
-        </table>
-        </div>
+        <h3>Outcome by forward horizon</h3>
+        <div style="overflow-x:auto"><table class="h-table">
+          <thead><tr><th>Horizon</th><th>Occurrences</th><th>% up</th><th>Avg gain</th><th>% down</th><th>Avg drop</th><th>Avg move</th><th>Median</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+      </div>`);
+  } else {
+    parts.push(
+      `<div class="no-results">${res.triggers ? 'No occurrences left with a completed forward return — restore some below.' : 'No occurrences of this scenario were found in the selected window. Try loosening the conditions or widening the time period.'}</div>`
+    );
+  }
+
+  // Top contributors (multi-stock only), from the active set.
+  if (!res.universe.symbol && events.length) {
+    const counts = {};
+    for (const e of events) counts[e.symbol] = (counts[e.symbol] || 0) + 1;
+    const bySymbol = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 20);
+    parts.push(`
+      <div class="result-block">
+        <h3>Which stocks triggered most</h3>
+        <div class="chip-row">${bySymbol.map(([s, c]) => `<span class="sym-chip"><b>${s}</b> ${c}</span>`).join('')}</div>
       </div>`);
   }
+
+  // Every occurrence — clickable to chart, removable from the data.
+  const shown = events.slice(0, EV_DISPLAY_CAP);
+  const evRows = shown
+    .map((e) => {
+      const ret = e.returns[res.primaryHorizon];
+      const retCell = ret == null ? '<span style="color:var(--text-faint)">pending</span>' : `<span class="${ret >= 0 ? 'up' : 'down'}">${sPct(ret)}</span>`;
+      return `
+        <tr class="clickable ev-row" data-id="${escapeHtml(e.id)}" data-symbol="${e.symbol}" data-time="${e.time}" data-ret="${ret == null ? '' : ret}">
+          <td>${e.date}</td><td>${e.symbol}</td><td>${usd(e.entry)}</td><td>${retCell}</td>
+          <td class="ev-actions"><button class="ev-remove" data-id="${escapeHtml(e.id)}" title="Remove this occurrence">×</button></td>
+        </tr>`;
+    })
+    .join('');
+  parts.push(`
+    <div class="result-block">
+      <h3>Occurrences <span class="ev-hint">— click a row to see the chart · × to remove it from the stats</span></h3>
+      <div class="ev-scroll" style="overflow-x:auto"><table class="ev-table">
+        <thead><tr><th>Date</th><th>Symbol</th><th>Entry</th><th>${res.primaryHorizon}d return</th><th></th></tr></thead>
+        <tbody>${evRows}</tbody>
+      </table></div>
+      ${events.length > EV_DISPLAY_CAP ? `<div class="disclaimer-sm">Showing the ${EV_DISPLAY_CAP} most recent of ${events.length} occurrences (stats use all of them).</div>` : ''}
+    </div>`);
 
   parts.push(
     '<div class="disclaimer-sm">Backtest over historical NYSE/NASDAQ data — past behavior does not predict future results. For education only, not investment advice.</div>'
   );
 
   out.innerHTML = parts.join('');
+}
+
+// Delegated clicks inside the results: remove, restore, or open a chart.
+function onResultsClick(e) {
+  const removeBtn = e.target.closest('.ev-remove');
+  if (removeBtn) {
+    e.stopPropagation();
+    analysis.removed.add(removeBtn.dataset.id);
+    renderResults();
+    return;
+  }
+  if (e.target.closest('.restore-removed')) {
+    analysis.removed.clear();
+    renderResults();
+    return;
+  }
+  const row = e.target.closest('.ev-row');
+  if (row) {
+    const ret = row.dataset.ret === '' ? null : Number(row.dataset.ret);
+    openOccurrence({ id: row.dataset.id, symbol: row.dataset.symbol, time: Number(row.dataset.time), date: row.cells[0].textContent, ret });
+  }
+}
+
+// ---- occurrence drill-down chart (modal) ----
+let occChart = null;
+
+async function openOccurrence(ev) {
+  const res = analysis.res;
+  const modal = $('#occ-modal');
+  const retTxt = ev.ret == null ? '' : `<span class="mt-ret ${ev.ret >= 0 ? 'up' : 'down'}">${sPct(ev.ret)}</span>`;
+  $('#occ-title').innerHTML = `<span class="mt-sym">${ev.symbol}</span> · ${ev.date} ${retTxt}`;
+  $('#occ-legend').innerHTML = '';
+  $('#occ-foot').innerHTML = '<span class="spinner"></span> Loading chart…';
+  $('#occ-chart').innerHTML = '';
+  modal.hidden = false;
+
+  const maCond = res.scenario.conditions.find((c) => c.kind === 'ma_cross' || c.kind === 'ma_state');
+  const params = new URLSearchParams({
+    symbol: ev.symbol,
+    time: String(ev.time),
+    horizon: String(res.primaryHorizon),
+    lookbackDays: String(res.lookbackDays || res.scenario.lookbackDays || 180),
+  });
+  if (maCond) params.set('maPeriod', String(maCond.period));
+
+  try {
+    const data = await api(`/api/occurrence?${params.toString()}`);
+    buildOccChart(data, maCond, ev.ret);
+    const exitTxt = data.exitPrice != null ? `exit ${usd(data.exitPrice)} after ${data.horizon} trading days` : `no exit yet (only ${data.horizon > 0 ? '' : ''}partial forward data)`;
+    $('#occ-foot').innerHTML = `Blue ▲ marks the trigger (entry <b>${usd(data.entryPrice)}</b>). ${
+      data.exitPrice != null
+        ? `The marker ${data.horizon} bars later is the ${exitTxt} — a <b class="${ev.ret >= 0 ? 'up' : 'down'}">${sPct(ev.ret)}</b> move.`
+        : 'This occurrence is too recent to have a completed forward return.'
+    }`;
+  } catch (err) {
+    $('#occ-foot').innerHTML = `<span class="down">Could not load chart: ${escapeHtml(err.message)}</span>`;
+  }
+}
+
+function buildOccChart(data, maCond, ret) {
+  const LWC = window.LightweightCharts;
+  if (occChart) {
+    occChart.remove();
+    occChart = null;
+  }
+  const cont = $('#occ-chart');
+  cont.innerHTML = '';
+  occChart = LWC.createChart(cont, {
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#9ca3af' },
+    grid: { vertLines: { color: 'rgba(148,163,184,0.08)' }, horzLines: { color: 'rgba(148,163,184,0.08)' } },
+    rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
+    timeScale: { borderColor: 'rgba(148,163,184,0.2)', timeVisible: false },
+    autoSize: true,
+  });
+
+  const candles = occChart.addCandlestickSeries({
+    upColor: CHART_COLORS.up, downColor: CHART_COLORS.down, borderVisible: false,
+    wickUpColor: CHART_COLORS.up, wickDownColor: CHART_COLORS.down,
+  });
+  candles.setData(data.bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+
+  const vol = occChart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'v' });
+  occChart.priceScale('v').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+  vol.setData(data.bars.map((b) => ({ time: b.time, value: b.volume || 0, color: b.close >= b.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)' })));
+
+  let maLegend = '';
+  if (maCond) {
+    const line = occChart.addLineSeries({ color: '#f59e0b', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+    const maData = (maCond.maType === 'ema' ? ema : sma)(data.bars, maCond.period);
+    line.setData(maData);
+    maLegend = `<span class="li"><span class="dot" style="background:#f59e0b"></span>${maCond.period}-day ${maCond.maType.toUpperCase()}</span>`;
+  }
+
+  const markers = [{ time: data.entryTime, position: 'belowBar', color: CHART_COLORS.ema20 || '#38bdf8', shape: 'arrowUp', text: 'Trigger' }];
+  if (data.exitTime) {
+    markers.push({
+      time: data.exitTime, position: 'aboveBar',
+      color: ret >= 0 ? CHART_COLORS.up : CHART_COLORS.down, shape: 'circle',
+      text: `+${data.horizon}d ${sPct(ret)}`,
+    });
+  }
+  candles.setMarkers(markers);
+  candles.createPriceLine({ price: data.entryPrice, color: '#38bdf8', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'entry' });
+  occChart.timeScale().fitContent();
+
+  $('#occ-legend').innerHTML =
+    `<span class="li"><span class="dot" style="background:#38bdf8"></span>Trigger day</span>` +
+    maLegend +
+    `<span class="li"><span class="dot" style="background:#26a69a"></span>Volume</span>`;
+}
+
+function closeOccurrence() {
+  $('#occ-modal').hidden = true;
+  if (occChart) {
+    occChart.remove();
+    occChart = null;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -114,7 +114,13 @@ it read your request and every field is overridable:
 2. **`universe.js`** maps the sector to a curated list of ~20 liquid NYSE/NASDAQ tickers.
 3. **`backtest.js`** fetches daily history for each name, finds every day all
    conditions fire, measures forward returns at 1/5/10/20-day horizons, and
-   aggregates into % up / avg gain and % down / avg drop.
+   returns the full occurrence list.
+
+Every occurrence is listed and interactive: **click a row** to open a chart of
+that stock around the trigger (with the relevant moving average, a Trigger
+marker at entry and the exit N days later), or hit **×** to remove it — the
+verdict, horizon table and averages recompute instantly (client-side), with
+"restore all" to bring removed occurrences back.
 
 ### Testing
 

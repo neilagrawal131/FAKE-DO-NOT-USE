@@ -7,7 +7,7 @@ import { sectorSymbols, sectorLabel } from './universe.js';
 import { describeScenario } from './scenario.js';
 
 // Pick an upstream fetch range big enough for the lookback + MA warmup + horizon.
-function fetchRange(lookbackDays) {
+export function fetchRange(lookbackDays) {
   if (lookbackDays <= 400) return '2y';
   if (lookbackDays <= 900) return '5y';
   return 'max';
@@ -140,6 +140,7 @@ export async function runBacktest(scenario, provider) {
       }
       if (!hasAny) continue;
       events.push({
+        id: `${sym}-${bars[i].time}`,
         symbol: sym,
         time: bars[i].time,
         date: new Date(bars[i].time * 1000).toISOString().slice(0, 10),
@@ -153,30 +154,11 @@ export async function runBacktest(scenario, provider) {
   const withData = perSymbol.filter(Boolean);
   const allEvents = withData.flatMap((s) => s.events);
 
-  // Aggregate per horizon.
-  const horizonStats = scenario.horizons.map((h) => {
-    const rets = allEvents.map((e) => e.returns[h]).filter((r) => r != null);
-    return { days: h, ...summarize(rets) };
-  });
-
-  // Per-symbol trigger counts (top contributors).
-  const bySymbol = withData
-    .map((s) => ({ symbol: s.symbol, count: s.events.length }))
-    .filter((x) => x.count > 0)
-    .sort((a, b) => b.count - a.count);
-
-  // Sample events (most recent first) that already have a primary-horizon
-  // outcome, so the events table shows completed results rather than pending ones.
-  const sample = [...allEvents]
-    .filter((e) => e.returns[scenario.primaryHorizon] != null)
-    .sort((a, b) => b.time - a.time)
-    .slice(0, 40)
-    .map((e) => ({
-      symbol: e.symbol,
-      date: e.date,
-      entry: e.entry,
-      primaryReturn: e.returns[scenario.primaryHorizon],
-    }));
+  // Return the full occurrence list (most recent first) so the client can render
+  // every one, chart it, and recompute stats live when the user removes some.
+  const MAX_EVENTS = 4000;
+  const sorted = [...allEvents].sort((a, b) => b.time - a.time);
+  const events = sorted.slice(0, MAX_EVENTS);
 
   return {
     scenario,
@@ -191,31 +173,9 @@ export async function runBacktest(scenario, provider) {
     },
     triggers: allEvents.length,
     primaryHorizon: scenario.primaryHorizon,
-    horizonStats,
-    bySymbol,
-    sample,
-  };
-}
-
-function summarize(rets) {
-  const n = rets.length;
-  if (n === 0) {
-    return { n: 0, pctUp: null, avgUp: null, pctDown: null, avgDown: null, avg: null, median: null, best: null, worst: null, winRate: null };
-  }
-  const ups = rets.filter((r) => r > 0);
-  const downs = rets.filter((r) => r < 0);
-  const sorted = [...rets].sort((a, b) => a - b);
-  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
-  return {
-    n,
-    pctUp: (ups.length / n) * 100,
-    avgUp: ups.length ? ups.reduce((a, b) => a + b, 0) / ups.length : 0,
-    pctDown: (downs.length / n) * 100,
-    avgDown: downs.length ? downs.reduce((a, b) => a + b, 0) / downs.length : 0,
-    avg: rets.reduce((a, b) => a + b, 0) / n,
-    median,
-    best: Math.max(...rets),
-    worst: Math.min(...rets),
-    winRate: (ups.length / n) * 100,
+    horizons: scenario.horizons,
+    events,
+    truncated: allEvents.length > MAX_EVENTS,
+    lookbackDays: scenario.lookbackDays,
   };
 }

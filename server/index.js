@@ -6,7 +6,7 @@ import * as mockProvider from './mock.js';
 import * as portfolio from './portfolio.js';
 import { aggregateBars } from './aggregate.js';
 import { parseScenario, normalizeScenario } from './scenario.js';
-import { runBacktest } from './backtest.js';
+import { runBacktest, fetchRange } from './backtest.js';
 import { sectorList } from './universe.js';
 
 // Choose the market-data source. Default is live Yahoo Finance; set
@@ -146,6 +146,54 @@ app.post(
     }
     const result = await runBacktest(scenario, yahoo);
     res.json({ ...result, warnings });
+  })
+);
+
+// A daily-bar window around a single occurrence, for the drill-down chart.
+app.get(
+  '/api/occurrence',
+  wrap(async (req, res) => {
+    const symbol = String(req.query.symbol || '').toUpperCase();
+    const time = Number(req.query.time);
+    const horizon = Math.max(1, Number(req.query.horizon) || 10);
+    const maPeriod = Number(req.query.maPeriod) || 0;
+    const lookbackDays = Number(req.query.lookbackDays) || 180;
+    if (!symbol || !Number.isFinite(time)) {
+      return res.status(400).json({ error: 'symbol and time are required' });
+    }
+    // Fetch the SAME daily series the backtest used so timestamps line up.
+    const data = await yahoo.chart(symbol, fetchRange(lookbackDays), '1d');
+    const bars = data.bars || [];
+    if (!bars.length) return res.status(404).json({ error: 'No data for symbol' });
+
+    // Locate the entry bar (exact, else nearest by time).
+    let idx = bars.findIndex((b) => b.time === time);
+    if (idx === -1) {
+      let bestDiff = Infinity;
+      bars.forEach((b, i) => {
+        const d = Math.abs(b.time - time);
+        if (d < bestDiff) {
+          bestDiff = d;
+          idx = i;
+        }
+      });
+    }
+    const leftPad = Math.max(60, maPeriod ? maPeriod + 5 : 0);
+    const rightPad = horizon + 15;
+    const from = Math.max(0, idx - leftPad);
+    const to = Math.min(bars.length, idx + rightPad + 1);
+    const window = bars.slice(from, to);
+    const exitIdx = idx + horizon;
+
+    res.json({
+      symbol,
+      bars: window,
+      entryTime: bars[idx].time,
+      entryPrice: bars[idx].close,
+      exitTime: exitIdx < bars.length ? bars[exitIdx].time : null,
+      exitPrice: exitIdx < bars.length ? bars[exitIdx].close : null,
+      horizon,
+    });
   })
 );
 
