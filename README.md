@@ -21,6 +21,13 @@ rail:
   Example: *"Analyze NVDA over the past 2 years — when it crosses above its
   50-day EMA, what happens over the next 20 days?"* → % up / avg gain, % down /
   avg drop across several forward horizons.
+- **🦾 AI Trader** — an algorithmic paper trader that trades **only** the patterns
+  you give it. Find a scenario you like in the AI Analyst and hit **“Add this
+  pattern to the AI Trader”**; it then trades that pattern on its own $100,000
+  paper account (buy on each trigger, exit after the pattern's forward horizon).
+  Every active pattern, its win rate and P/L, and every individual trade are
+  shown on the tab. Toggle patterns on/off or remove them and the account
+  recomputes live.
 
 No real money, no brokerage account, no API keys.
 
@@ -106,6 +113,10 @@ public/
 | POST   | `/api/portfolio/reset`   | Reset to $100k cash                      |
 | GET    | `/api/sectors`           | Sector universes for the AI Analyst      |
 | POST   | `/api/analyze`           | `{ query }` — backtest a plain-English scenario |
+| GET    | `/api/aitrader`          | AI Trader account, patterns and trade log |
+| POST   | `/api/aitrader/strategies` | `{ scenario }` — add a pattern to the AI Trader |
+| POST   | `/api/aitrader/strategies/:id/toggle` | Enable/disable a pattern         |
+| DELETE | `/api/aitrader/strategies/:id` | Remove a pattern                     |
 
 ### AI Analyst — how it works
 

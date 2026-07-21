@@ -8,6 +8,7 @@ import { aggregateBars } from './aggregate.js';
 import { parseScenario, normalizeScenario } from './scenario.js';
 import { runBacktest, fetchRange } from './backtest.js';
 import { sectorList } from './universe.js';
+import * as aitrader from './aitrader.js';
 
 // Choose the market-data source. Default is live Yahoo Finance; set
 // DATA_SOURCE=mock for an offline demo with synthetic prices.
@@ -197,6 +198,50 @@ app.get(
       exitPrice: exitIdx < bars.length ? bars[exitIdx].close : null,
       horizon,
     });
+  })
+);
+
+// --- AI Trader (algorithmic paper trader) --------------------------------------
+app.get(
+  '/api/aitrader',
+  wrap(async (req, res) => {
+    res.json(await aitrader.simulate(yahoo));
+  })
+);
+
+app.post(
+  '/api/aitrader/strategies',
+  wrap(async (req, res) => {
+    const { scenario, name } = req.body || {};
+    if (!scenario || !Array.isArray(scenario.conditions) || scenario.conditions.length === 0) {
+      return res.status(400).json({ error: 'A pattern needs at least one trigger condition.' });
+    }
+    aitrader.addStrategy(normalizeScenario(scenario), name);
+    res.json(await aitrader.simulate(yahoo));
+  })
+);
+
+app.post(
+  '/api/aitrader/strategies/:id/toggle',
+  wrap(async (req, res) => {
+    aitrader.setEnabled(req.params.id, Boolean(req.body && req.body.enabled));
+    res.json(await aitrader.simulate(yahoo));
+  })
+);
+
+app.delete(
+  '/api/aitrader/strategies/:id',
+  wrap(async (req, res) => {
+    aitrader.removeStrategy(req.params.id);
+    res.json(await aitrader.simulate(yahoo));
+  })
+);
+
+app.post(
+  '/api/aitrader/reset',
+  wrap(async (req, res) => {
+    aitrader.reset();
+    res.json(await aitrader.simulate(yahoo));
   })
 );
 

@@ -4,3 +4,4 @@ public/vendor/
 *.log
 .DS_Store
 .env
+data/aitrader.json

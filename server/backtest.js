@@ -183,3 +183,43 @@ export async function runBacktest(scenario, provider) {
     lookbackDays: scenario.lookbackDays,
   };
 }
+
+// Lower-level scanner used by the AI Trader: returns one signal per trigger with
+// the entry (trigger bar) and the exit `primaryHorizon` bars later.
+export async function collectSignals(scenario, provider) {
+  const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
+  const intraday = scenario.timeframe === 'intraday';
+  const interval = intraday ? '30m' : '1d';
+  const range = intraday ? '1mo' : fetchRange(scenario.lookbackDays);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cutoff = nowSec - scenario.lookbackDays * 86400;
+  const H = scenario.primaryHorizon;
+
+  const maDefs = scenario.conditions
+    .filter((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')
+    .map((c) => ({ key: maKey(c), period: c.period, type: c.maType }));
+
+  const per = await mapLimit(symbols, 6, async (sym) => {
+    const data = await provider.chart(sym, range, interval);
+    const bars = data.bars || [];
+    if (bars.length < 30) return [];
+    const maCache = new Map();
+    for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
+
+    const out = [];
+    for (let i = 1; i < bars.length - 1; i++) {
+      if (bars[i].time < cutoff) continue;
+      if (!conditionsMet(scenario.conditions, bars, maCache, i)) continue;
+      const j = i + H;
+      out.push({
+        symbol: sym,
+        time: bars[i].time,
+        entryPrice: bars[i].close,
+        exitTime: j < bars.length ? bars[j].time : null,
+        exitPrice: j < bars.length ? bars[j].close : null,
+      });
+    }
+    return out;
+  });
+  return per.flat();
+}

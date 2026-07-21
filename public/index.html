@@ -23,6 +23,9 @@
         <button class="rail-item" data-view="analyst">
           <span class="rail-ic">🤖</span><span class="rail-label">AI Analyst</span>
         </button>
+        <button class="rail-item" data-view="trader">
+          <span class="rail-ic">🦾</span><span class="rail-label">AI Trader</span>
+        </button>
         <div class="rail-foot" id="rail-source"></div>
       </nav>
 
@@ -179,6 +182,36 @@
             </div>
 
             <div id="analyst-results"></div>
+          </div>
+        </section>
+
+        <!-- ================= AI TRADER VIEW ================= -->
+        <section class="view" id="view-trader" hidden>
+          <div class="analyst">
+            <header class="analyst-head">
+              <h1>🦾 AI Trader</h1>
+              <p>
+                An algorithmic paper trader. It trades <b>only</b> the patterns you give it —
+                find a scenario in the <b>AI Analyst</b> that looks good, hit
+                “Add to AI Trader”, and it trades that pattern on its own $100,000 paper
+                account. Every trade and every active pattern shows up here.
+              </p>
+            </header>
+
+            <div id="trader-account" class="trader-account"></div>
+
+            <div class="result-block">
+              <div class="trader-block-head">
+                <h3>Active patterns <span class="ev-hint">— added from the AI Analyst</span></h3>
+                <button class="btn-ghost" id="trader-reset">Reset trader</button>
+              </div>
+              <div id="trader-strategies"></div>
+            </div>
+
+            <div class="result-block">
+              <h3>Trade log <span class="ev-hint">— every trade the bot has made</span></h3>
+              <div id="trader-trades"></div>
+            </div>
           </div>
         </section>
       </div>

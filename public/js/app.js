@@ -631,6 +631,7 @@ function setView(view) {
   if (view === 'trade' && state.chart) {
     requestAnimationFrame(() => state.chart.chart.timeScale().fitContent());
   }
+  if (view === 'trader') refreshTrader();
 }
 
 async function showConfig() {
@@ -803,6 +804,13 @@ function renderResults() {
     `<div class="universe-note">${scopeNote} · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}${removedTxt}.</div>`
   );
 
+  // Promote this pattern to the algorithmic AI Trader.
+  if (res.scenario.conditions && res.scenario.conditions.length) {
+    parts.push(
+      `<button class="btn-primary add-to-trader" id="add-to-trader" style="width:auto;padding:10px 18px">🦾 Add this pattern to the AI Trader</button>`
+    );
+  }
+
   const events = activeEvents();
   const horizons = res.horizons || [1, 5, 10, 20];
   const stats = computeHorizonStats(events, horizons);
@@ -902,6 +910,10 @@ function renderResults() {
 
 // Delegated clicks inside the results: remove, restore, or open a chart.
 function onResultsClick(e) {
+  if (e.target.closest('#add-to-trader')) {
+    addPatternToTrader();
+    return;
+  }
   const removeBtn = e.target.closest('.ev-remove');
   if (removeBtn) {
     e.stopPropagation();
@@ -1019,6 +1031,159 @@ function closeOccurrence() {
 }
 
 // ---------------------------------------------------------------------------
+// AI Trader
+// ---------------------------------------------------------------------------
+async function addPatternToTrader() {
+  if (!analysis.res) return;
+  const btn = $('#add-to-trader');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+  }
+  try {
+    const stateData = await api('/api/aitrader/strategies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: analysis.res.scenario }),
+    });
+    renderTrader(stateData);
+    toast('Pattern added to the AI Trader — switch to the AI Trader tab to watch it trade.', 'success');
+    if (btn) btn.textContent = '✓ Added to AI Trader';
+  } catch (err) {
+    toast(err.message, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🦾 Add this pattern to the AI Trader';
+    }
+  }
+}
+
+async function refreshTrader() {
+  const acc = $('#trader-account');
+  if (acc && !acc.innerHTML) acc.innerHTML = '<div class="loading"><span class="spinner"></span> Running strategies…</div>';
+  try {
+    renderTrader(await api('/api/aitrader'));
+  } catch (err) {
+    $('#trader-strategies').innerHTML = `<div class="trader-empty">Could not load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderTrader(data) {
+  const a = data.account;
+  $('#trader-account').innerHTML = `
+    <div class="tile"><div class="tile-label">Account value</div><div class="tile-value">${usd(a.equity)}</div>
+      <div class="tile-sub ${signClass(a.totalPnL)}">${pct(a.totalReturnPct)} all-time</div></div>
+    <div class="tile"><div class="tile-label">Total P/L</div><div class="tile-value ${signClass(a.totalPnL)}" style="font-size:16px">${usd(a.totalPnL)}</div>
+      <div class="tile-sub">realized ${usd(a.realizedPnL)}</div></div>
+    <div class="tile"><div class="tile-label">Cash</div><div class="tile-value" style="font-size:16px">${usd(a.cash)}</div>
+      <div class="tile-sub">invested ${usd(a.openValue)}</div></div>
+    <div class="tile"><div class="tile-label">Trades</div><div class="tile-value" style="font-size:16px">${a.totalTrades}</div>
+      <div class="tile-sub">${a.openPositions} open · ${a.closedTrades} closed</div></div>`;
+
+  // strategies
+  const sEl = $('#trader-strategies');
+  if (!data.strategies.length) {
+    sEl.innerHTML =
+      '<div class="trader-empty">No patterns yet. Go to the <a data-goto="analyst">AI Analyst</a>, find a scenario you like, and hit “Add this pattern to the AI Trader”.</div>';
+  } else {
+    sEl.innerHTML = data.strategies
+      .map((s) => {
+        const st = s.stats || {};
+        const pnl = st.pnl || 0;
+        return `
+        <div class="strat-card ${s.enabled ? '' : 'strat-disabled'}">
+          <label class="switch" title="Enable / disable">
+            <input type="checkbox" class="strat-toggle" data-id="${s.id}" ${s.enabled ? 'checked' : ''} />
+            <span class="slider"></span>
+          </label>
+          <div class="strat-main">
+            <div class="strat-name">${escapeHtml(s.name)}</div>
+            <div class="strat-desc">${escapeHtml(s.interpretation)}</div>
+          </div>
+          <div class="strat-stats">
+            <div class="strat-stat"><div class="k">Trades</div><div class="v">${st.trades || 0}</div></div>
+            <div class="strat-stat"><div class="k">Win rate</div><div class="v">${st.winRate == null ? '—' : st.winRate.toFixed(0) + '%'}</div></div>
+            <div class="strat-stat"><div class="k">P/L</div><div class="v ${signClass(pnl)}">${usd(pnl)}</div></div>
+          </div>
+          <div class="strat-actions">
+            <button class="strat-remove" data-id="${s.id}" title="Remove pattern">×</button>
+          </div>
+        </div>`;
+      })
+      .join('');
+  }
+
+  // trade log
+  const tEl = $('#trader-trades');
+  if (!data.trades.length) {
+    tEl.innerHTML = '<div class="trader-empty">No trades yet — add a pattern above.</div>';
+  } else {
+    const rows = data.trades
+      .map(
+        (t) => `
+        <tr>
+          <td>${t.entryDate}</td>
+          <td>${t.symbol}</td>
+          <td>${t.shares}</td>
+          <td>${usd(t.entryPrice)}</td>
+          <td>${t.exitPrice == null ? '—' : usd(t.exitPrice)}</td>
+          <td class="${(t.pnl || 0) >= 0 ? 'up' : 'down'}">${t.pnl == null ? '—' : usd(t.pnl) + ' (' + sPct(t.pnlPct) + ')'}</td>
+          <td>${t.status === 'open' ? '<span class="badge-open">open</span>' : '<span class="badge-closed">closed</span>'}</td>
+          <td class="ev-hint" style="font-weight:400">${escapeHtml(t.strategyName)}</td>
+        </tr>`
+      )
+      .join('');
+    tEl.innerHTML = `
+      <div class="ev-scroll" style="overflow-x:auto;max-height:460px"><table class="ev-table">
+        <thead><tr><th>Entry date</th><th>Symbol</th><th>Shares</th><th>Entry</th><th>Exit</th><th>P/L</th><th>Status</th><th>Pattern</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`;
+  }
+}
+
+function initTrader() {
+  $('#trader-reset').addEventListener('click', async () => {
+    if (!confirm('Remove all patterns and reset the AI Trader to $100,000?')) return;
+    try {
+      renderTrader(await api('/api/aitrader/reset', { method: 'POST' }));
+      toast('AI Trader reset.', 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  const view = $('#view-trader');
+  view.addEventListener('change', async (e) => {
+    const tog = e.target.closest('.strat-toggle');
+    if (!tog) return;
+    try {
+      renderTrader(
+        await api(`/api/aitrader/strategies/${tog.dataset.id}/toggle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: tog.checked }),
+        })
+      );
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+  view.addEventListener('click', async (e) => {
+    const rm = e.target.closest('.strat-remove');
+    if (rm) {
+      try {
+        renderTrader(await api(`/api/aitrader/strategies/${rm.dataset.id}`, { method: 'DELETE' }));
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      return;
+    }
+    const goto = e.target.closest('[data-goto]');
+    if (goto) setView(goto.dataset.goto);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 function initQuickPicks() {
@@ -1037,6 +1202,7 @@ function boot() {
   initPortfolioInteractions();
   initQuickPicks();
   initAnalyst();
+  initTrader();
   showConfig();
   refreshPortfolio();
   // Periodically re-mark the portfolio to live prices.
