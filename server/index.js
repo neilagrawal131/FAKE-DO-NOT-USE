@@ -158,11 +158,14 @@ app.get(
     const horizon = Math.max(1, Number(req.query.horizon) || 10);
     const maPeriod = Number(req.query.maPeriod) || 0;
     const lookbackDays = Number(req.query.lookbackDays) || 180;
+    const intraday = req.query.timeframe === 'intraday';
     if (!symbol || !Number.isFinite(time)) {
       return res.status(400).json({ error: 'symbol and time are required' });
     }
-    // Fetch the SAME daily series the backtest used so timestamps line up.
-    const data = await yahoo.chart(symbol, fetchRange(lookbackDays), '1d');
+    // Fetch the SAME series the backtest used so timestamps line up.
+    const data = intraday
+      ? await yahoo.chart(symbol, '1mo', '30m')
+      : await yahoo.chart(symbol, fetchRange(lookbackDays), '1d');
     const bars = data.bars || [];
     if (!bars.length) return res.status(404).json({ error: 'No data for symbol' });
 

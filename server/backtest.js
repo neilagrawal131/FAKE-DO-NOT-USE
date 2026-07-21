@@ -104,7 +104,9 @@ function maKey(c) {
 
 export async function runBacktest(scenario, provider) {
   const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
-  const range = fetchRange(scenario.lookbackDays);
+  const intraday = scenario.timeframe === 'intraday';
+  const interval = intraday ? '30m' : '1d';
+  const range = intraday ? '1mo' : fetchRange(scenario.lookbackDays);
   const nowSec = Math.floor(Date.now() / 1000);
   const cutoff = nowSec - scenario.lookbackDays * 86400;
   const maxHorizon = Math.max(...scenario.horizons);
@@ -115,7 +117,7 @@ export async function runBacktest(scenario, provider) {
     .map((c) => ({ key: maKey(c), period: c.period, type: c.maType }));
 
   const perSymbol = await mapLimit(symbols, 6, async (sym) => {
-    const data = await provider.chart(sym, range, '1d');
+    const data = await provider.chart(sym, range, interval);
     const bars = data.bars || [];
     if (bars.length < 30) return null;
 
@@ -143,7 +145,9 @@ export async function runBacktest(scenario, provider) {
         id: `${sym}-${bars[i].time}`,
         symbol: sym,
         time: bars[i].time,
-        date: new Date(bars[i].time * 1000).toISOString().slice(0, 10),
+        date: intraday
+          ? new Date(bars[i].time * 1000).toISOString().slice(0, 16).replace('T', ' ')
+          : new Date(bars[i].time * 1000).toISOString().slice(0, 10),
         entry: bars[i].close,
         returns: rets,
       });

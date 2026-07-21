@@ -12,7 +12,10 @@ rail:
   next, and by how much**. You control everything from the prompt:
   - **A single stock or a whole sector** — "Analyze NVDA…", "$TSLA…", "Apple…", or "in biotech…".
   - **The lookback window** — "over the past 2 years", "in the last 6 months", "past 90 days".
-  - **The forward horizon** — "over the next 20 days", "held for 2 weeks", "10 days later".
+  - **The forward horizon** — from **"over the next 30 minutes"** or "next hour"
+    up to "over the next 20 days" / "held for 2 weeks" / "next 5 years". A
+    sub-daily horizon runs the whole analysis on 30-minute intraday bars
+    (~30-day window; MA periods and volume are then per 30-minute bar).
   - **The trigger** — moving-average crosses, volume thresholds, single-day % moves.
 
   Example: *"Analyze NVDA over the past 2 years — when it crosses above its

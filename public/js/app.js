@@ -649,11 +649,36 @@ const ANALYST_EXAMPLES = [
   'In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?',
   'Analyze NVDA over the past 2 years: when it crosses above its 50-day EMA, what happens over the next 20 days?',
   '$TSLA in the last year when a bullish fair value gap forms — over the next 5 days',
-  'In semiconductors over the past year, when a bearish fair value gap forms with volume over 20m',
+  'NVDA when it crosses above its 20-bar EMA, what happens over the next 30 minutes?',
 ];
 
 const sPct = (n) => (n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
 const pctOnly = (n) => (n == null ? '—' : `${n.toFixed(1)}%`);
+
+// Horizon labels honour the analysis timeframe (base bar = 1 day or 30 minutes).
+function analysisTimeframe() {
+  return analysis.res?.scenario?.timeframe || 'daily';
+}
+function hzLabel(bars) {
+  if (analysisTimeframe() === 'intraday') {
+    const m = bars * 30;
+    if (m < 60) return `${m}m`;
+    if (m % 390 === 0) return `${m / 390}d`;
+    if (m % 60 === 0) return `${m / 60}h`;
+    return `${m}m`;
+  }
+  return `${bars}d`;
+}
+function hzLabelLong(bars) {
+  if (analysisTimeframe() === 'intraday') {
+    const m = bars * 30;
+    if (m < 60) return `${m} minutes`;
+    if (m % 390 === 0) return `${m / 390} trading day${m / 390 > 1 ? 's' : ''}`;
+    if (m % 60 === 0) return `${m / 60} hour${m / 60 > 1 ? 's' : ''}`;
+    return `${m} minutes`;
+  }
+  return `${bars} trading day${bars > 1 ? 's' : ''}`;
+}
 
 function initAnalyst() {
   $('#query-examples').innerHTML = ANALYST_EXAMPLES.map(
@@ -790,19 +815,19 @@ function renderResults() {
       <div class="verdict">
         <div class="verdict-side up">
           <div class="verdict-pct">${pctOnly(primary.pctUp)}</div>
-          <div class="verdict-cap">of the time it <b>rose</b> over the next ${primary.days} trading days</div>
+          <div class="verdict-cap">of the time it <b>rose</b> over the next ${hzLabelLong(primary.days)}</div>
           <div class="verdict-move up">average gain ${sPct(primary.avgUp)}</div>
         </div>
         <div class="verdict-side down">
           <div class="verdict-pct">${pctOnly(primary.pctDown)}</div>
-          <div class="verdict-cap">of the time it <b>fell</b> over the next ${primary.days} trading days</div>
+          <div class="verdict-cap">of the time it <b>fell</b> over the next ${hzLabelLong(primary.days)}</div>
           <div class="verdict-move down">average drop ${sPct(primary.avgDown)}</div>
         </div>
       </div>
       <div class="updown-bar"><div class="seg-up" style="width:${upW}%"></div><div class="seg-down" style="width:${100 - upW}%"></div></div>
       <div class="summary-line">
         Across <b>${primary.n}</b> occurrences${removedCount ? ` (after removing ${removedCount})` : ''}, the average move over the next
-        ${primary.days} trading days was <b class="${avgClass}">${sPct(primary.avg)}</b>
+        ${hzLabelLong(primary.days)} was <b class="${avgClass}">${sPct(primary.avg)}</b>
         (median ${sPct(primary.median)}). Best case <b class="up">${sPct(primary.best)}</b>,
         worst case <b class="down">${sPct(primary.worst)}</b>.
       </div>`);
@@ -812,7 +837,7 @@ function renderResults() {
       .map(
         (h) => `
         <tr class="${h.days === res.primaryHorizon ? 'primary' : ''}">
-          <td>${h.days}d</td><td>${h.n}</td>
+          <td>${hzLabel(h.days)}</td><td>${h.n}</td>
           <td class="up">${pctOnly(h.pctUp)}</td><td class="up">${sPct(h.avgUp)}</td>
           <td class="down">${pctOnly(h.pctDown)}</td><td class="down">${sPct(h.avgDown)}</td>
           <td class="${h.avg >= 0 ? 'up' : 'down'}">${sPct(h.avg)}</td><td>${sPct(h.median)}</td>
@@ -862,7 +887,7 @@ function renderResults() {
     <div class="result-block">
       <h3>Occurrences <span class="ev-hint">— click a row to see the chart · × to remove it from the stats</span></h3>
       <div class="ev-scroll" style="overflow-x:auto"><table class="ev-table">
-        <thead><tr><th>Date</th><th>Symbol</th><th>Entry</th><th>${res.primaryHorizon}d return</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Symbol</th><th>Entry</th><th>${hzLabel(res.primaryHorizon)} return</th><th></th></tr></thead>
         <tbody>${evRows}</tbody>
       </table></div>
       ${events.length > EV_DISPLAY_CAP ? `<div class="disclaimer-sm">Showing the ${EV_DISPLAY_CAP} most recent of ${events.length} occurrences (stats use all of them).</div>` : ''}
@@ -910,21 +935,22 @@ async function openOccurrence(ev) {
   modal.hidden = false;
 
   const maCond = res.scenario.conditions.find((c) => c.kind === 'ma_cross' || c.kind === 'ma_state');
+  const intraday = res.scenario.timeframe === 'intraday';
   const params = new URLSearchParams({
     symbol: ev.symbol,
     time: String(ev.time),
     horizon: String(res.primaryHorizon),
     lookbackDays: String(res.lookbackDays || res.scenario.lookbackDays || 180),
+    timeframe: res.scenario.timeframe || 'daily',
   });
   if (maCond) params.set('maPeriod', String(maCond.period));
 
   try {
     const data = await api(`/api/occurrence?${params.toString()}`);
-    buildOccChart(data, maCond, ev.ret);
-    const exitTxt = data.exitPrice != null ? `exit ${usd(data.exitPrice)} after ${data.horizon} trading days` : `no exit yet (only ${data.horizon > 0 ? '' : ''}partial forward data)`;
+    buildOccChart(data, maCond, ev.ret, intraday);
     $('#occ-foot').innerHTML = `Blue ▲ marks the trigger (entry <b>${usd(data.entryPrice)}</b>). ${
       data.exitPrice != null
-        ? `The marker ${data.horizon} bars later is the ${exitTxt} — a <b class="${ev.ret >= 0 ? 'up' : 'down'}">${sPct(ev.ret)}</b> move.`
+        ? `The marker ${hzLabelLong(data.horizon)} later is the exit <b>${usd(data.exitPrice)}</b> — a <b class="${ev.ret >= 0 ? 'up' : 'down'}">${sPct(ev.ret)}</b> move.`
         : 'This occurrence is too recent to have a completed forward return.'
     }`;
   } catch (err) {
@@ -932,7 +958,7 @@ async function openOccurrence(ev) {
   }
 }
 
-function buildOccChart(data, maCond, ret) {
+function buildOccChart(data, maCond, ret, intraday = false) {
   const LWC = window.LightweightCharts;
   if (occChart) {
     occChart.remove();
@@ -944,7 +970,7 @@ function buildOccChart(data, maCond, ret) {
     layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#9ca3af' },
     grid: { vertLines: { color: 'rgba(148,163,184,0.08)' }, horzLines: { color: 'rgba(148,163,184,0.08)' } },
     rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
-    timeScale: { borderColor: 'rgba(148,163,184,0.2)', timeVisible: false },
+    timeScale: { borderColor: 'rgba(148,163,184,0.2)', timeVisible: intraday, secondsVisible: false },
     autoSize: true,
   });
 
@@ -963,7 +989,7 @@ function buildOccChart(data, maCond, ret) {
     const line = occChart.addLineSeries({ color: '#f59e0b', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
     const maData = (maCond.maType === 'ema' ? ema : sma)(data.bars, maCond.period);
     line.setData(maData);
-    maLegend = `<span class="li"><span class="dot" style="background:#f59e0b"></span>${maCond.period}-day ${maCond.maType.toUpperCase()}</span>`;
+    maLegend = `<span class="li"><span class="dot" style="background:#f59e0b"></span>${maCond.period}-${intraday ? 'bar' : 'day'} ${maCond.maType.toUpperCase()}</span>`;
   }
 
   const markers = [{ time: data.entryTime, position: 'belowBar', color: CHART_COLORS.ema20 || '#38bdf8', shape: 'arrowUp', text: 'Trigger' }];
@@ -971,7 +997,7 @@ function buildOccChart(data, maCond, ret) {
     markers.push({
       time: data.exitTime, position: 'aboveBar',
       color: ret >= 0 ? CHART_COLORS.up : CHART_COLORS.down, shape: 'circle',
-      text: `+${data.horizon}d ${sPct(ret)}`,
+      text: `+${hzLabel(data.horizon)} ${sPct(ret)}`,
     });
   }
   candles.setMarkers(markers);

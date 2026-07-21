@@ -40,7 +40,7 @@ export function parseScenario(text) {
 
   // Moving-average cross / position.
   // Captures period, optional ema/sma, and above/below direction.
-  const maRe = /(\d+)\s*[-\s]?day\s*(exponential|simple|ema|sma)?\s*(?:moving\s*average|moving\s*avg|movingaverage|\bma\b|\bema\b|\bsma\b)/g;
+  const maRe = /(\d+)\s*[-\s]?(?:day|bar|period)?s?\s*(exponential|simple|ema|sma)?\s*(?:moving\s*average|moving\s*avg|movingaverage|\bma\b|\bema\b|\bsma\b)/g;
   let m;
   while ((m = maRe.exec(lower)) !== null) {
     const period = parseInt(m[1], 10);
@@ -89,22 +89,36 @@ export function parseScenario(text) {
     warnings.push('No trigger condition detected. Try phrases like "crosses above its 100-day moving average" or "volume over 100,000".');
   }
 
-  // --- forward horizon (how long to hold / measure the move) ---
-  let primaryHorizon = DEFAULT_PRIMARY;
-  const horizons = [...DEFAULT_HORIZONS];
-  const parsedHorizon = parseHorizon(lower);
-  if (parsedHorizon) {
-    primaryHorizon = parsedHorizon;
-    if (!horizons.includes(parsedHorizon)) {
-      horizons.push(parsedHorizon);
-      horizons.sort((a, b) => a - b);
+  // --- forward horizon (how long to measure the move) ---
+  // A sub-daily horizon switches the whole analysis to 30-minute intraday bars.
+  const ph = parseHorizon(lower);
+  let timeframe = 'daily';
+  let barMinutes = null;
+  let primaryHorizon;
+  let horizons;
+  if (ph && ph.minutes != null) {
+    timeframe = 'intraday';
+    barMinutes = 30;
+    primaryHorizon = Math.max(1, Math.round(ph.minutes / 30));
+    horizons = uniqSort([1, 2, 4, 13, primaryHorizon]); // 30m, 1h, 2h, 1 session
+    if (lookbackDays > 30) {
+      warnings.push('Intraday (30-minute) history only goes back ~30 days — narrowing the analysis window to 30 days.');
+      lookbackDays = 30;
     }
+    if (conditions.some((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')) {
+      warnings.push('Intraday mode: moving-average periods are counted in 30-minute bars (not days), and volume is per 30-minute bar.');
+    }
+  } else {
+    primaryHorizon = ph && ph.days ? ph.days : DEFAULT_PRIMARY;
+    horizons = uniqSort([...DEFAULT_HORIZONS, primaryHorizon]);
   }
 
   const scenario = {
     symbol: symbol || null,
     sectorKey,
     lookbackDays,
+    timeframe,
+    barMinutes,
     horizons,
     primaryHorizon,
     conditions,
@@ -114,10 +128,13 @@ export function parseScenario(text) {
 
 // Fill defaults / clamp a scenario coming from the UI form.
 export function normalizeScenario(s = {}) {
+  const timeframe = s.timeframe === 'intraday' ? 'intraday' : 'daily';
   const scenario = {
     symbol: s.symbol ? String(s.symbol).toUpperCase() : null,
     sectorKey: s.symbol ? null : s.sectorKey || 'market',
-    lookbackDays: clamp(Number(s.lookbackDays) || DEFAULT_LOOKBACK_DAYS, 20, 365 * 6),
+    lookbackDays: clamp(Number(s.lookbackDays) || DEFAULT_LOOKBACK_DAYS, 20, timeframe === 'intraday' ? 30 : 365 * 6),
+    timeframe,
+    barMinutes: timeframe === 'intraday' ? 30 : null,
     horizons: Array.isArray(s.horizons) && s.horizons.length ? s.horizons.map(Number).filter((n) => n > 0) : [...DEFAULT_HORIZONS],
     primaryHorizon: Number(s.primaryHorizon) || DEFAULT_PRIMARY,
     conditions: Array.isArray(s.conditions) ? s.conditions : [],
@@ -131,20 +148,23 @@ export function normalizeScenario(s = {}) {
 
 // Human-readable one-liner describing the scenario.
 export function describeScenario(s) {
+  const intraday = s.timeframe === 'intraday';
+  const unit = intraday ? 'bar' : 'day';
   const parts = [];
   for (const c of s.conditions) {
-    if (c.kind === 'ma_cross') parts.push(`price crosses ${c.dir} its ${c.period}-day ${c.maType.toUpperCase()}`);
-    else if (c.kind === 'ma_state') parts.push(`price is ${c.dir} its ${c.period}-day ${c.maType.toUpperCase()}`);
-    else if (c.kind === 'volume') parts.push(`volume ${c.op === '>' ? 'above' : 'below'} ${c.value.toLocaleString('en-US')}`);
-    else if (c.kind === 'day_change') parts.push(`the stock ${c.dir === 'up' ? 'rises' : 'falls'} ${c.pct}%+ in a day`);
+    if (c.kind === 'ma_cross') parts.push(`price crosses ${c.dir} its ${c.period}-${unit} ${c.maType.toUpperCase()}`);
+    else if (c.kind === 'ma_state') parts.push(`price is ${c.dir} its ${c.period}-${unit} ${c.maType.toUpperCase()}`);
+    else if (c.kind === 'volume') parts.push(`volume ${c.op === '>' ? 'above' : 'below'} ${c.value.toLocaleString('en-US')}${intraday ? ' per 30-min bar' : ''}`);
+    else if (c.kind === 'day_change') parts.push(`the ${intraday ? 'bar' : 'stock'} ${c.dir === 'up' ? 'rises' : 'falls'} ${c.pct}%+ ${intraday ? 'in a 30-min bar' : 'in a day'}`);
     else if (c.kind === 'fvg') parts.push(`a ${c.dir} fair value gap forms${c.minPct != null ? ` (≥ ${c.minPct}%)` : ''}`);
   }
-  const cond = parts.length ? parts.join(' AND ') : 'any day';
-  const window = describeWindow(s.lookbackDays);
+  const cond = parts.length ? parts.join(' AND ') : intraday ? 'any bar' : 'any day';
+  const window = describeWindow(s.lookbackDays) + (intraday ? ' of 30-minute bars' : '');
+  const hz = horizonLabelLong(s.primaryHorizon, s.timeframe);
   if (s.symbol) {
-    return `For ${s.symbol}, over the past ${window}, when ${cond} — what did it do over the next ${s.primaryHorizon} trading days?`;
+    return `For ${s.symbol}, over the past ${window}, when ${cond} — what did it do over the next ${hz}?`;
   }
-  return `In ${sectorLabel(s.sectorKey)}, over the past ${window}, when ${cond} — what did the stock do over the next ${s.primaryHorizon} trading days?`;
+  return `In ${sectorLabel(s.sectorKey)}, over the past ${window}, when ${cond} — what did the stock do over the next ${hz}?`;
 }
 
 function describeWindow(days) {
@@ -158,21 +178,44 @@ function describeWindow(days) {
 
 // ---- helpers ----
 
-// Forward horizon in *trading* days from phrasings like "over the next 20 days",
-// "after 2 weeks", "hold for 15 sessions", "10 days later", "a month out".
+// Parse a forward horizon. Returns { minutes } for sub-daily horizons (which put
+// the analysis into 30-minute intraday mode) or { days } for daily+ horizons.
 function parseHorizon(s) {
-  let m = s.match(/(?:next|following|forward|over\s+the\s+(?:next|following)|after|hold(?:ing)?\s+for|held\s+for)\s+(\d+)\s*(day|days|week|weeks|month|months|session|sessions)/);
-  if (m) return horizonDays(parseInt(m[1], 10), m[2]);
+  // Intraday: minutes / hours.
+  let m = s.match(/(?:next|following|forward|over\s+the\s+(?:next|following)|after|hold(?:ing)?\s+for|held\s+for|within)\s+(\d+)\s*(minutes?|mins?|hours?|hrs?)/);
+  if (m) return { minutes: /hour|hr/.test(m[2]) ? parseInt(m[1], 10) * 60 : parseInt(m[1], 10) };
+  m = s.match(/(\d+)\s*(minutes?|mins?|hours?|hrs?)\s+(?:later|after|out|forward|ahead)/);
+  if (m) return { minutes: /hour|hr/.test(m[2]) ? parseInt(m[1], 10) * 60 : parseInt(m[1], 10) };
+  if (/\bhalf\s+an?\s+hour\b/.test(s)) return { minutes: 30 };
+  if (/\b(?:next\s+hour|over\s+the\s+next\s+hour|an?\s+hour\s+(?:later|after|out|forward|ahead)|within\s+an?\s+hour)\b/.test(s)) return { minutes: 60 };
+
+  // Daily+: days / weeks / months / sessions.
+  m = s.match(/(?:next|following|forward|over\s+the\s+(?:next|following)|after|hold(?:ing)?\s+for|held\s+for)\s+(\d+)\s*(day|days|week|weeks|month|months|session|sessions)/);
+  if (m) return { days: horizonDays(parseInt(m[1], 10), m[2]) };
   m = s.match(/(\d+)\s*(day|days|week|weeks|month|months|session|sessions)\s+(?:later|after|out|forward|ahead)/);
-  if (m) return horizonDays(parseInt(m[1], 10), m[2]);
+  if (m) return { days: horizonDays(parseInt(m[1], 10), m[2]) };
   m = s.match(/\b(?:a|one)\s+(day|week|month)\s+(?:later|after|out|forward|ahead)/);
-  if (m) return horizonDays(1, m[1]);
+  if (m) return { days: horizonDays(1, m[1]) };
   return null;
 }
 function horizonDays(n, unit) {
   if (/month/.test(unit)) return n * 21; // ~21 trading days / month
   if (/week/.test(unit)) return n * 5; // 5 trading days / week
   return n; // day / session
+}
+
+const uniqSort = (arr) => [...new Set(arr)].sort((a, b) => a - b);
+
+// Long human label for a horizon expressed in base bars (days, or 30-min bars).
+export function horizonLabelLong(bars, timeframe) {
+  if (timeframe === 'intraday') {
+    const mins = bars * 30;
+    if (mins < 60) return `${mins} minutes`;
+    if (mins % 390 === 0) return `${mins / 390} trading day${mins / 390 > 1 ? 's' : ''}`;
+    if (mins % 60 === 0) return `${mins / 60} hour${mins / 60 > 1 ? 's' : ''}`;
+    return `${mins} minutes`;
+  }
+  return `${bars} trading day${bars > 1 ? 's' : ''}`;
 }
 
 function toDays(n, unit) {
