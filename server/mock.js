@@ -50,13 +50,27 @@ function seedFor(symbol) {
   return h >>> 0;
 }
 
-const RANGE_BARS = {
-  '1d': { count: 390, step: 60 }, // 1-min bars over a session
-  '5d': { count: 390, step: 5 * 60 },
-  '1mo': { count: 300, step: 30 * 60 },
-  '6mo': { count: 126, step: 24 * 3600 },
-  '1y': { count: 252, step: 24 * 3600 },
-  '5y': { count: 260, step: 7 * 24 * 3600 },
+const INTERVAL_SEC = {
+  '1m': 60,
+  '5m': 300,
+  '15m': 900,
+  '30m': 1800,
+  '60m': 3600,
+  '1h': 3600,
+  '1d': 86400,
+  '1wk': 7 * 86400,
+  '1mo': 30 * 86400,
+};
+const RANGE_SEC = {
+  '1d': 86400,
+  '5d': 5 * 86400,
+  '1mo': 30 * 86400,
+  '3mo': 91 * 86400,
+  '6mo': 182 * 86400,
+  '1y': 365 * 86400,
+  '2y': 730 * 86400,
+  '5y': 1825 * 86400,
+  max: 12 * 365 * 86400,
 };
 
 function meta(symbol) {
@@ -64,24 +78,28 @@ function meta(symbol) {
   return c || { symbol, name: `${symbol} (simulated)`, exchange: 'NASDAQ', base: 100, cap: 5e10, sector: 'Technology', industry: 'Software' };
 }
 
-// Build a stable random-walk series for a symbol/range.
-function series(symbol, range, nowSec) {
+// Build a stable random-walk series at the given native interval over the range.
+function series(symbol, range, interval, nowSec) {
   const c = meta(symbol);
-  const cfg = RANGE_BARS[range] || RANGE_BARS['1mo'];
-  const rand = mulberry32(seedFor(symbol) ^ seedFor(range));
+  const step = INTERVAL_SEC[interval] || 1800;
+  const span = RANGE_SEC[range] || RANGE_SEC['1mo'];
+  const count = Math.max(2, Math.min(1500, Math.round(span / step)));
+  const rand = mulberry32(seedFor(symbol) ^ seedFor(range) ^ seedFor(interval));
   const bars = [];
   let price = c.base * (0.75 + rand() * 0.1);
-  const start = nowSec - cfg.count * cfg.step;
-  const vol = c.base * 0.012;
-  for (let i = 0; i < cfg.count; i++) {
+  const start = nowSec - count * step;
+  // Volatility grows with bar length so a monthly candle swings more than a
+  // 1-minute one, capped so long bars stay sane.
+  const vol = Math.min(c.base * 0.12, c.base * 0.006 * Math.sqrt(step / 3600));
+  for (let i = 0; i < count; i++) {
     const drift = (c.base - price) * 0.002; // gentle mean reversion toward base
     const shock = (rand() - 0.5) * 2 * vol;
     const open = price;
     const close = Math.max(1, open + drift + shock);
     const high = Math.max(open, close) + rand() * vol * 0.8;
     const low = Math.min(open, close) - rand() * vol * 0.8;
-    const volume = Math.round((5e5 + rand() * 4e6) * (c.cap / 1e12 + 0.3));
-    bars.push({ time: start + i * cfg.step, open, high, low, close, volume });
+    const volume = Math.round((5e5 + rand() * 4e6) * (c.cap / 1e12 + 0.3) * (step / 1800));
+    bars.push({ time: start + i * step, open, high, low, close, volume });
     price = close;
   }
   return bars;
@@ -95,10 +113,10 @@ export async function search(query) {
   ).map((c) => ({ symbol: c.symbol, name: c.name, exchange: c.exchange, type: 'EQUITY' }));
 }
 
-export async function chart(symbol, range = '1mo') {
+export async function chart(symbol, range = '1mo', interval = '1d') {
   symbol = symbol.toUpperCase();
   const nowSec = Math.floor(Date.now() / 1000);
-  const bars = series(symbol, range, nowSec);
+  const bars = series(symbol, range, interval, nowSec);
   const c = meta(symbol);
   const last = bars[bars.length - 1];
   return {
@@ -117,12 +135,12 @@ export async function chart(symbol, range = '1mo') {
 export async function quote(symbol) {
   symbol = symbol.toUpperCase();
   const c = meta(symbol);
-  const ch = await chart(symbol, '1y');
+  const ch = await chart(symbol, '1y', '1d');
   const bars = ch.bars;
   const closes = bars.map((b) => b.close);
   // Use the intraday series for the *live* price so the quote matches the price
-  // orders actually fill at (lastPrice() also reads the 1d series).
-  const intraday = (await chart(symbol, '1d')).bars;
+  // orders actually fill at (lastPrice() reads the same series).
+  const intraday = (await chart(symbol, '5d', '5m')).bars;
   const last = intraday[intraday.length - 1];
   const prev = intraday[intraday.length - 2] || { close: last.open };
   const rand = mulberry32(seedFor(symbol));
@@ -170,7 +188,7 @@ export async function quote(symbol) {
 }
 
 export async function lastPrice(symbol) {
-  const ch = await chart(symbol, '1d');
+  const ch = await chart(symbol, '5d', '5m');
   const last = ch.bars[ch.bars.length - 1];
   const sp = spreadFor(symbol.toUpperCase(), last.close);
   return {

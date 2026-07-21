@@ -57,19 +57,26 @@ function toast(msg, kind = '') {
 const state = {
   symbol: null,
   quote: null,
-  timeframe: '1M',
+  timeframe: '1D',
   side: 'buy',
   chart: null,
 };
 
-const INTRADAY_TF = new Set(['1D', '5D', '1M']);
+// Intraday timeframes get a session-anchored VWAP; higher ones anchor to range.
+const INTRADAY_TF = new Set(['1m', '5m', '10m', '30m', '1h', '3h']);
 const TF_INTERVAL = {
-  '1D': '1-minute bars',
-  '5D': '5-minute bars',
-  '1M': '30-minute bars',
-  '6M': 'daily bars',
-  '1Y': 'daily bars',
-  '5Y': 'weekly bars',
+  '1m': 'each candle = 1 minute',
+  '5m': 'each candle = 5 minutes',
+  '10m': 'each candle = 10 minutes',
+  '30m': 'each candle = 30 minutes',
+  '1h': 'each candle = 1 hour',
+  '3h': 'each candle = 3 hours',
+  '1D': 'each candle = 1 day',
+  '1W': 'each candle = 1 week',
+  '1Mo': 'each candle = 1 month',
+  '6Mo': 'each candle = 6 months',
+  '1Y': 'each candle = 1 year',
+  '5Y': 'each candle = 5 years',
 };
 const QUICK_PICKS = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'AMD'];
 

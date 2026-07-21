@@ -53,9 +53,15 @@ const afterTrade = await page.evaluate(() => ({
 }));
 console.log('TRADE:', JSON.stringify(afterTrade));
 
-// Switch timeframe to 1D (intraday -> VWAP path) and toggle an indicator.
-await page.click('#timeframes button[data-tf="1D"]');
-await page.waitForTimeout(700);
+// Cycle through several candle intervals and confirm the label updates.
+for (const tf of ['1m', '3h', '1W', '1Mo']) {
+  await page.click(`#timeframes button[data-tf="${tf}"]`);
+  await page.waitForTimeout(500);
+  const label = await page.evaluate(() => document.querySelector('#tf-interval').textContent.trim());
+  console.log(`TF ${tf} -> label:`, label);
+}
+
+// Toggle an indicator off.
 await page.click('#indicator-toggles label:has-text("EMA 100")');
 const ema100off = await page.evaluate(() => !document.querySelector('#indicator-toggles input[data-ind="ema100"]').checked);
 console.log('EMA100 toggled off:', ema100off);

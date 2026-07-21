@@ -72,6 +72,9 @@ export class PriceChart {
     this.bars = bars;
     this.intraday = intraday;
 
+    // Show clock time on intraday charts; just dates on daily+ charts.
+    this.chart.timeScale().applyOptions({ timeVisible: intraday, secondsVisible: false });
+
     this.candles.setData(
       bars.map((b) => ({
         time: b.time,

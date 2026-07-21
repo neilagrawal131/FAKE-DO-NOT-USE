@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import * as yahooProvider from './yahoo.js';
 import * as mockProvider from './mock.js';
 import * as portfolio from './portfolio.js';
+import { aggregateBars } from './aggregate.js';
 
 // Choose the market-data source. Default is live Yahoo Finance; set
 // DATA_SOURCE=mock for an offline demo with synthetic prices.
@@ -21,14 +22,22 @@ app.use(express.json());
 // --- tiny async wrapper so route errors flow to the handler below -------------
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-// Map a user-facing timeframe to Yahoo range+interval.
+// Each timeframe key = the span ONE candle represents. `interval`/`range` are
+// what we fetch upstream; `agg` (optional) resamples finer native bars into the
+// requested bucket when the feed has no native interval for it.
 const TIMEFRAMES = {
-  '1D': { range: '1d', interval: '1m' },
-  '5D': { range: '5d', interval: '5m' },
-  '1M': { range: '1mo', interval: '30m' },
-  '6M': { range: '6mo', interval: '1d' },
-  '1Y': { range: '1y', interval: '1d' },
-  '5Y': { range: '5y', interval: '1wk' },
+  '1m': { interval: '1m', range: '1d' },
+  '5m': { interval: '5m', range: '5d' },
+  '10m': { interval: '5m', range: '1mo', agg: { seconds: 600 } },
+  '30m': { interval: '30m', range: '1mo' },
+  '1h': { interval: '60m', range: '3mo' },
+  '3h': { interval: '60m', range: '6mo', agg: { seconds: 3 * 3600 } },
+  '1D': { interval: '1d', range: '2y' },
+  '1W': { interval: '1wk', range: '5y' },
+  '1Mo': { interval: '1mo', range: 'max' },
+  '6Mo': { interval: '1mo', range: 'max', agg: { calendar: 'halfyear' } },
+  '1Y': { interval: '1mo', range: 'max', agg: { calendar: 'year' } },
+  '5Y': { interval: '1mo', range: 'max', agg: { calendar: 'fiveyear' } },
 };
 
 // --- market data --------------------------------------------------------------
@@ -49,10 +58,12 @@ app.get(
 app.get(
   '/api/chart/:symbol',
   wrap(async (req, res) => {
-    const tf = TIMEFRAMES[req.query.tf] || null;
-    const range = tf?.range || req.query.range || '1mo';
-    const interval = tf?.interval || req.query.interval || '1d';
-    res.json(await yahoo.chart(req.params.symbol, range, interval));
+    const key = req.query.tf || '1D';
+    const tf = TIMEFRAMES[key];
+    if (!tf) return res.status(400).json({ error: `Unknown timeframe "${key}"` });
+    const data = await yahoo.chart(req.params.symbol, tf.range, tf.interval);
+    const bars = tf.agg ? aggregateBars(data.bars, tf.agg) : data.bars;
+    res.json({ meta: data.meta, bars, timeframe: key });
   })
 );
 
