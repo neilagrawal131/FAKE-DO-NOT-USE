@@ -81,6 +81,18 @@ function conditionsMet(conditions, bars, maCache, i) {
       const chg = ((bars[i].close - bars[i - 1].close) / bars[i - 1].close) * 100;
       if (c.dir === 'up' && !(chg >= c.pct)) return false;
       if (c.dir === 'down' && !(chg <= -c.pct)) return false;
+    } else if (c.kind === 'fvg') {
+      // 3-candle imbalance: bullish = today's low above the high 2 bars back;
+      // bearish = today's high below the low 2 bars back.
+      if (i < 2) return false;
+      let gap;
+      if (c.dir === 'bullish') {
+        gap = bars[i].low - bars[i - 2].high;
+      } else {
+        gap = bars[i - 2].low - bars[i].high;
+      }
+      if (!(gap > 0)) return false;
+      if (c.minPct != null && !((gap / bars[i].close) * 100 >= c.minPct)) return false;
     }
   }
   return true;

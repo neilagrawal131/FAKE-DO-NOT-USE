@@ -647,8 +647,8 @@ async function showConfig() {
 const ANALYST_EXAMPLES = [
   'In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?',
   'Analyze NVDA over the past 2 years: when it crosses above its 50-day EMA, what happens over the next 20 days?',
-  '$TSLA in the last year when it drops 5% in a day — measured over the next 5 days',
-  'Semiconductors over the past 3 months when volume is over 20m, held for 15 days',
+  '$TSLA in the last year when a bullish fair value gap forms — over the next 5 days',
+  'In semiconductors over the past year, when a bearish fair value gap forms with volume over 20m',
 ];
 
 const sPct = (n) => (n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);

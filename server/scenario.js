@@ -70,6 +70,21 @@ export function parseScenario(text) {
   if (upMove) conditions.push({ kind: 'day_change', dir: 'up', pct: parseFloat(upMove[1]) });
   if (downMove) conditions.push({ kind: 'day_change', dir: 'down', pct: parseFloat(downMove[1]) });
 
+  // Fair value gap (3-candle imbalance). "bullish/bearish fair value gap", "fvg",
+  // "imbalance", optionally sized ("fair value gap of at least 0.5%").
+  const fvgMatch = lower.match(/\b(?:fair[-\s]*value[-\s]*gaps?|fvgs?|imbalances?)\b/);
+  if (fvgMatch) {
+    const idx = fvgMatch.index;
+    const ctx = lower.slice(Math.max(0, idx - 32), idx + fvgMatch[0].length + 12);
+    const dir = /\b(bearish|bear|sell[-\s]?side|downside|down|short)\b/.test(ctx) ? 'bearish' : 'bullish';
+    let minPct = null;
+    const sizeM = lower
+      .slice(idx, idx + 60)
+      .match(/(?:of|at\s*least|bigger\s*than|larger\s*than|over|greater\s*than|>=?)\s*(\d+(?:\.\d+)?)\s*%/);
+    if (sizeM) minPct = parseFloat(sizeM[1]);
+    conditions.push({ kind: 'fvg', dir, minPct });
+  }
+
   if (conditions.length === 0) {
     warnings.push('No trigger condition detected. Try phrases like "crosses above its 100-day moving average" or "volume over 100,000".');
   }
@@ -122,6 +137,7 @@ export function describeScenario(s) {
     else if (c.kind === 'ma_state') parts.push(`price is ${c.dir} its ${c.period}-day ${c.maType.toUpperCase()}`);
     else if (c.kind === 'volume') parts.push(`volume ${c.op === '>' ? 'above' : 'below'} ${c.value.toLocaleString('en-US')}`);
     else if (c.kind === 'day_change') parts.push(`the stock ${c.dir === 'up' ? 'rises' : 'falls'} ${c.pct}%+ in a day`);
+    else if (c.kind === 'fvg') parts.push(`a ${c.dir} fair value gap forms${c.minPct != null ? ` (≥ ${c.minPct}%)` : ''}`);
   }
   const cond = parts.length ? parts.join(' AND ') : 'any day';
   const window = describeWindow(s.lookbackDays);
