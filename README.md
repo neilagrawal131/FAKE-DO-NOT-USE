@@ -1,4 +1,4 @@
-# 📈 Paper Trader — NYSE & NASDAQ Simulator
+# 📈 Shubh Quant Dashboard — NYSE & NASDAQ Simulator
 
 A self-hosted **paper (virtual-money) stock trading platform**. Search any NYSE
 or NASDAQ stock, study a real interactive chart with **volume, VWAP and
@@ -6,7 +6,7 @@ or NASDAQ stock, study a real interactive chart with **volume, VWAP and
 range**, then practice **buying and selling with a $100,000 paper account** —
 no real money, no brokerage account, no API keys.
 
-![Paper Trader screenshot](docs/screenshot.png)
+![Shubh Quant Dashboard screenshot](docs/screenshot.png)
 
 ## Features
 

@@ -1,7 +1,7 @@
 {
-  "name": "paper-trader",
+  "name": "shubh-quant-dashboard",
   "version": "1.0.0",
-  "description": "Paper trading stock simulator with real NYSE/NASDAQ market data, live charts, and technical indicators (EMA, VWAP, volume, market cap).",
+  "description": "Shubh Quant Dashboard — paper trading stock simulator with real NYSE/NASDAQ market data, live charts, and technical indicators (EMA, VWAP, volume, market cap).",
   "type": "module",
   "main": "server/index.js",
   "scripts": {

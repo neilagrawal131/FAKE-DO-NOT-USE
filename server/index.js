@@ -140,5 +140,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n  Paper Trader running at http://localhost:${PORT}\n`);
+  console.log(`\n  Shubh Quant Dashboard running at http://localhost:${PORT}\n`);
 });
