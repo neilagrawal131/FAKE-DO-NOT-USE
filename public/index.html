@@ -3,150 +3,186 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shubh Quant Dashboard — NYSE &amp; NASDAQ Simulator</title>
+    <title>Shubh Quant Dashboard — NYSE &amp; NASDAQ</title>
     <link rel="preconnect" href="https://query1.finance.yahoo.com" />
     <link rel="stylesheet" href="/css/styles.css" />
     <script src="/vendor/lightweight-charts.standalone.production.js" defer></script>
     <script type="module" src="/js/app.js" defer></script>
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <span class="logo">▲▼</span>
-        <div>
-          <div class="brand-name">Shubh Quant Dashboard</div>
-          <div class="brand-sub">NYSE · NASDAQ · virtual money</div>
+    <div class="shell">
+      <!-- Left navigation rail -->
+      <nav class="rail" id="rail">
+        <div class="rail-brand">
+          <span class="logo">▲▼</span>
+          <span class="rail-title">Shubh<br />Quant</span>
         </div>
-      </div>
+        <button class="rail-item active" data-view="trade">
+          <span class="rail-ic">📈</span><span class="rail-label">Trade</span>
+        </button>
+        <button class="rail-item" data-view="analyst">
+          <span class="rail-ic">🤖</span><span class="rail-label">AI Analyst</span>
+        </button>
+        <div class="rail-foot" id="rail-source"></div>
+      </nav>
 
-      <div class="search" id="search">
-        <input
-          id="search-input"
-          type="text"
-          placeholder="Search a stock — ticker or company (e.g. AAPL, Tesla)…"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <div class="search-results" id="search-results" hidden></div>
-      </div>
+      <div class="views">
+        <!-- ================= TRADE VIEW ================= -->
+        <section class="view active" id="view-trade">
+          <header class="topbar">
+            <div class="search" id="search">
+              <input
+                id="search-input"
+                type="text"
+                placeholder="Search a stock — ticker or company (e.g. AAPL, Tesla)…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div class="search-results" id="search-results" hidden></div>
+            </div>
+            <div class="account-pill" id="account-pill" title="Total account equity">
+              <span class="account-label">Equity</span>
+              <span class="account-value" id="account-equity">—</span>
+            </div>
+          </header>
 
-      <div class="account-pill" id="account-pill" title="Total account equity">
-        <span class="account-label">Equity</span>
-        <span class="account-value" id="account-equity">—</span>
-      </div>
-    </header>
-
-    <main class="layout">
-      <!-- Portfolio sidebar -->
-      <aside class="sidebar" id="sidebar">
-        <div class="card summary-card">
-          <div class="summary-head">
-            <h2>Portfolio</h2>
-            <button class="btn-ghost" id="reset-btn" title="Reset to $100,000 cash">
-              Reset
-            </button>
-          </div>
-          <div class="summary-grid" id="summary-grid"><!-- tiles injected --></div>
-        </div>
-
-        <div class="card">
-          <h3 class="card-title">Positions</h3>
-          <div id="positions"><div class="empty">No open positions.</div></div>
-        </div>
-
-        <div class="card">
-          <h3 class="card-title">Order history</h3>
-          <div id="orders"><div class="empty">No orders yet.</div></div>
-        </div>
-      </aside>
-
-      <!-- Main content -->
-      <section class="content" id="content">
-        <div class="welcome" id="welcome">
-          <h1>Trade the market with virtual money.</h1>
-          <p>
-            Search any NYSE or NASDAQ stock to see live charts with volume, VWAP and
-            20 / 50 / 100 EMAs, plus fundamentals like market cap and P/E — then
-            practice buying and selling with a $100,000 paper account.
-          </p>
-          <div class="quick-picks" id="quick-picks"></div>
-        </div>
-
-        <article class="detail" id="detail" hidden>
-          <div class="detail-head">
-            <div class="ticker-block">
-              <div class="ticker-line">
-                <span class="ticker-symbol" id="d-symbol">—</span>
-                <span class="ticker-exchange" id="d-exchange"></span>
+          <main class="layout">
+            <aside class="sidebar" id="sidebar">
+              <div class="card summary-card">
+                <div class="summary-head">
+                  <h2>Portfolio</h2>
+                  <button class="btn-ghost" id="reset-btn" title="Reset to $100,000 cash">Reset</button>
+                </div>
+                <div class="summary-grid" id="summary-grid"></div>
               </div>
-              <div class="ticker-name" id="d-name"></div>
-            </div>
-            <div class="price-block">
-              <span class="price-now" id="d-price">—</span>
-              <span class="price-change" id="d-change"></span>
-              <span class="price-spread" id="d-spread"></span>
-            </div>
-          </div>
-
-          <div class="chart-toolbar">
-            <div class="tf-block">
-              <div class="timeframes" id="timeframes">
-                <button data-tf="1m" title="Each candle = 1 minute">1m</button>
-                <button data-tf="5m" title="Each candle = 5 minutes">5m</button>
-                <button data-tf="10m" title="Each candle = 10 minutes">10m</button>
-                <button data-tf="30m" title="Each candle = 30 minutes">30m</button>
-                <button data-tf="1h" title="Each candle = 1 hour">1h</button>
-                <button data-tf="3h" title="Each candle = 3 hours">3h</button>
-                <button data-tf="1D" class="active" title="Each candle = 1 day">1D</button>
-                <button data-tf="1W" title="Each candle = 1 week">1W</button>
-                <button data-tf="1Mo" title="Each candle = 1 month">1Mo</button>
-                <button data-tf="6Mo" title="Each candle = 6 months">6Mo</button>
-                <button data-tf="1Y" title="Each candle = 1 year">1Y</button>
-                <button data-tf="5Y" title="Each candle = 5 years">5Y</button>
+              <div class="card">
+                <h3 class="card-title">Positions</h3>
+                <div id="positions"><div class="empty">No open positions.</div></div>
               </div>
-              <span class="tf-interval" id="tf-interval"></span>
-            </div>
-            <div class="indicator-toggles" id="indicator-toggles">
-              <label><input type="checkbox" data-ind="ema20" checked /><span class="sw ema20"></span>EMA 20</label>
-              <label><input type="checkbox" data-ind="ema50" checked /><span class="sw ema50"></span>EMA 50</label>
-              <label><input type="checkbox" data-ind="ema100" checked /><span class="sw ema100"></span>EMA 100</label>
-              <label><input type="checkbox" data-ind="vwap" checked /><span class="sw vwap"></span>VWAP</label>
-            </div>
-          </div>
-
-          <div class="chart-wrap">
-            <div class="chart-legend" id="chart-legend"></div>
-            <div class="chart" id="chart"></div>
-          </div>
-
-          <div class="detail-lower">
-            <div class="card info-card">
-              <h3 class="card-title">Key statistics</h3>
-              <div class="stat-grid" id="stat-grid"></div>
-              <div class="profile" id="profile"></div>
-            </div>
-
-            <div class="card trade-card">
-              <h3 class="card-title">Trade</h3>
-              <div class="trade-toggle">
-                <button class="active" data-side="buy" id="buy-tab">Buy</button>
-                <button data-side="sell" id="sell-tab">Sell</button>
+              <div class="card">
+                <h3 class="card-title">Order history</h3>
+                <div id="orders"><div class="empty">No orders yet.</div></div>
               </div>
-              <label class="field">
-                <span>Shares</span>
-                <input id="shares-input" type="number" min="0" step="1" value="1" />
-              </label>
-              <div class="quantity-quick" id="qty-quick"></div>
-              <div class="fill-note" id="fill-note"></div>
-              <div class="trade-est" id="trade-est"></div>
-              <button class="btn-primary" id="submit-order">Buy</button>
-              <div class="trade-msg" id="trade-msg"></div>
-              <div class="buying-power" id="buying-power"></div>
+            </aside>
+
+            <section class="content" id="content">
+              <div class="welcome" id="welcome">
+                <h1>Trade the market with virtual money.</h1>
+                <p>
+                  Search any NYSE or NASDAQ stock to see live charts with volume, VWAP and
+                  20 / 50 / 100 EMAs, plus fundamentals like market cap and P/E — then
+                  practice buying and selling with a $100,000 paper account.
+                </p>
+                <div class="quick-picks" id="quick-picks"></div>
+              </div>
+
+              <article class="detail" id="detail" hidden>
+                <div class="detail-head">
+                  <div class="ticker-block">
+                    <div class="ticker-line">
+                      <span class="ticker-symbol" id="d-symbol">—</span>
+                      <span class="ticker-exchange" id="d-exchange"></span>
+                    </div>
+                    <div class="ticker-name" id="d-name"></div>
+                  </div>
+                  <div class="price-block">
+                    <span class="price-now" id="d-price">—</span>
+                    <span class="price-change" id="d-change"></span>
+                    <span class="price-spread" id="d-spread"></span>
+                  </div>
+                </div>
+
+                <div class="chart-toolbar">
+                  <div class="tf-block">
+                    <div class="timeframes" id="timeframes">
+                      <button data-tf="1m" title="Each candle = 1 minute">1m</button>
+                      <button data-tf="5m" title="Each candle = 5 minutes">5m</button>
+                      <button data-tf="10m" title="Each candle = 10 minutes">10m</button>
+                      <button data-tf="30m" title="Each candle = 30 minutes">30m</button>
+                      <button data-tf="1h" title="Each candle = 1 hour">1h</button>
+                      <button data-tf="3h" title="Each candle = 3 hours">3h</button>
+                      <button data-tf="1D" class="active" title="Each candle = 1 day">1D</button>
+                      <button data-tf="1W" title="Each candle = 1 week">1W</button>
+                      <button data-tf="1Mo" title="Each candle = 1 month">1Mo</button>
+                      <button data-tf="6Mo" title="Each candle = 6 months">6Mo</button>
+                      <button data-tf="1Y" title="Each candle = 1 year">1Y</button>
+                      <button data-tf="5Y" title="Each candle = 5 years">5Y</button>
+                    </div>
+                    <span class="tf-interval" id="tf-interval"></span>
+                  </div>
+                  <div class="indicator-toggles" id="indicator-toggles">
+                    <label><input type="checkbox" data-ind="ema20" checked /><span class="sw ema20"></span>EMA 20</label>
+                    <label><input type="checkbox" data-ind="ema50" checked /><span class="sw ema50"></span>EMA 50</label>
+                    <label><input type="checkbox" data-ind="ema100" checked /><span class="sw ema100"></span>EMA 100</label>
+                    <label><input type="checkbox" data-ind="vwap" checked /><span class="sw vwap"></span>VWAP</label>
+                  </div>
+                </div>
+
+                <div class="chart-wrap">
+                  <div class="chart-legend" id="chart-legend"></div>
+                  <div class="chart" id="chart"></div>
+                </div>
+
+                <div class="detail-lower">
+                  <div class="card info-card">
+                    <h3 class="card-title">Key statistics</h3>
+                    <div class="stat-grid" id="stat-grid"></div>
+                    <div class="profile" id="profile"></div>
+                  </div>
+
+                  <div class="card trade-card">
+                    <h3 class="card-title">Trade</h3>
+                    <div class="trade-toggle">
+                      <button class="active" data-side="buy" id="buy-tab">Buy</button>
+                      <button data-side="sell" id="sell-tab">Sell</button>
+                    </div>
+                    <label class="field">
+                      <span>Shares</span>
+                      <input id="shares-input" type="number" min="0" step="1" value="1" />
+                    </label>
+                    <div class="quantity-quick" id="qty-quick"></div>
+                    <div class="fill-note" id="fill-note"></div>
+                    <div class="trade-est" id="trade-est"></div>
+                    <button class="btn-primary" id="submit-order">Buy</button>
+                    <div class="trade-msg" id="trade-msg"></div>
+                    <div class="buying-power" id="buying-power"></div>
+                  </div>
+                </div>
+              </article>
+            </section>
+          </main>
+        </section>
+
+        <!-- ================= AI ANALYST VIEW ================= -->
+        <section class="view" id="view-analyst" hidden>
+          <div class="analyst">
+            <header class="analyst-head">
+              <h1>🤖 AI Market Analyst</h1>
+              <p>
+                Describe a market scenario in plain English. I'll backtest it across real
+                NYSE/NASDAQ history for that sector and tell you what usually happened next —
+                how often the stock rose or fell, and by how much.
+              </p>
+            </header>
+
+            <div class="card query-card">
+              <textarea
+                id="analyst-query"
+                rows="3"
+                placeholder="e.g. In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?"
+              ></textarea>
+              <div class="query-examples" id="query-examples"></div>
+              <div class="query-actions">
+                <span class="query-hint">Tip: name a <b>sector</b>, a <b>time window</b>, and a <b>trigger</b> (moving-average cross, volume, % move).</span>
+                <button class="btn-primary" id="run-analysis">Analyze scenario</button>
+              </div>
             </div>
+
+            <div id="analyst-results"></div>
           </div>
-        </article>
-      </section>
-    </main>
+        </section>
+      </div>
+    </div>
 
     <div class="toast" id="toast" hidden></div>
   </body>

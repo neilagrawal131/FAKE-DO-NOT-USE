@@ -1,12 +1,23 @@
 # 📈 Shubh Quant Dashboard — NYSE & NASDAQ Simulator
 
-A self-hosted **paper (virtual-money) stock trading platform**. Search any NYSE
-or NASDAQ stock, study a real interactive chart with **volume, VWAP and
-20 / 50 / 100 EMAs**, review fundamentals like **market cap, P/E and 52-week
-range**, then practice **buying and selling with a $100,000 paper account** —
-no real money, no brokerage account, no API keys.
+A self-hosted **quant dashboard** with two workspaces, switchable from the side
+rail:
 
-![Shubh Quant Dashboard screenshot](docs/screenshot.png)
+- **📈 Trade** — a paper (virtual-money) trading simulator. Search any NYSE or
+  NASDAQ stock, study a real interactive chart with **volume, VWAP and
+  20 / 50 / 100 EMAs**, review fundamentals like **market cap, P/E and 52-week
+  range**, then practice **buying and selling with a $100,000 paper account**.
+- **🤖 AI Analyst** — describe a market scenario in plain English and it
+  backtests it across real sector history, reporting **how often the stock rose
+  or fell next, and by how much**. Example: *"In the past 6 months in biotech,
+  what happens when a stock rises above its 100-day moving average with volume
+  over 100,000?"* → % up / avg gain, % down / avg drop across several forward
+  horizons.
+
+No real money, no brokerage account, no API keys.
+
+![Trade workspace](docs/screenshot.png)
+![AI Analyst workspace](docs/analyst.png)
 
 ## Features
 
@@ -85,6 +96,20 @@ public/
 | GET    | `/api/portfolio`         | Account marked to live prices            |
 | POST   | `/api/trade`             | `{ side, symbol, shares }` — market order|
 | POST   | `/api/portfolio/reset`   | Reset to $100k cash                      |
+| GET    | `/api/sectors`           | Sector universes for the AI Analyst      |
+| POST   | `/api/analyze`           | `{ query }` — backtest a plain-English scenario |
+
+### AI Analyst — how it works
+
+The scenario engine is deterministic (not an LLM), so it always shows exactly how
+it read your request and every field is overridable:
+
+1. **`scenario.js`** parses the query into `{ sector, lookback, conditions[], horizons }`
+   using keyword/regex rules (moving-average crosses, volume thresholds, % moves).
+2. **`universe.js`** maps the sector to a curated list of ~20 liquid NYSE/NASDAQ tickers.
+3. **`backtest.js`** fetches daily history for each name, finds every day all
+   conditions fire, measures forward returns at 1/5/10/20-day horizons, and
+   aggregates into % up / avg gain and % down / avg drop.
 
 ### Testing
 

@@ -5,6 +5,9 @@ import * as yahooProvider from './yahoo.js';
 import * as mockProvider from './mock.js';
 import * as portfolio from './portfolio.js';
 import { aggregateBars } from './aggregate.js';
+import { parseScenario, normalizeScenario } from './scenario.js';
+import { runBacktest } from './backtest.js';
+import { sectorList } from './universe.js';
 
 // Choose the market-data source. Default is live Yahoo Finance; set
 // DATA_SOURCE=mock for an offline demo with synthetic prices.
@@ -122,6 +125,27 @@ app.post(
   wrap(async (req, res) => {
     portfolio.reset();
     res.json(portfolio.summarize({}));
+  })
+);
+
+// --- AI Analyst / scenario backtesting -----------------------------------------
+app.get('/api/sectors', (req, res) => res.json(sectorList()));
+
+app.post(
+  '/api/analyze',
+  wrap(async (req, res) => {
+    const { query, scenario: override } = req.body || {};
+    let scenario;
+    let warnings = [];
+    if (override && Array.isArray(override.conditions)) {
+      scenario = normalizeScenario(override);
+    } else {
+      const parsed = parseScenario(query || '');
+      scenario = parsed.scenario;
+      warnings = parsed.warnings;
+    }
+    const result = await runBacktest(scenario, yahoo);
+    res.json({ ...result, warnings });
   })
 );
 

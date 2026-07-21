@@ -68,6 +68,27 @@ console.log('EMA100 toggled off:', ema100off);
 await page.waitForTimeout(300);
 
 await page.screenshot({ path: OUT, fullPage: true });
-console.log('ERRORS:', errors.length ? JSON.stringify(errors) : 'none');
 console.log('SHOT:', OUT);
+
+// ---- AI Analyst view ----
+await page.click('.rail-item[data-view="analyst"]');
+await page.waitForSelector('#view-analyst.active', { timeout: 4000 });
+await page.fill('#analyst-query', 'In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?');
+await page.click('#run-analysis');
+await page.waitForSelector('.verdict', { timeout: 20000 });
+const analyst = await page.evaluate(() => ({
+  interp: document.querySelector('.interp')?.textContent.replace(/\s+/g, ' ').trim().slice(0, 120),
+  pctUp: document.querySelector('.verdict-side.up .verdict-pct')?.textContent,
+  avgUp: document.querySelector('.verdict-side.up .verdict-move')?.textContent,
+  pctDown: document.querySelector('.verdict-side.down .verdict-pct')?.textContent,
+  horizonRows: document.querySelectorAll('.h-table tbody tr').length,
+  eventRows: document.querySelectorAll('.ev-table tbody tr').length,
+}));
+console.log('ANALYST:', JSON.stringify(analyst));
+await page.waitForTimeout(300);
+const OUT2 = OUT.replace(/\.png$/, '-analyst.png');
+await page.screenshot({ path: OUT2, fullPage: true });
+console.log('SHOT2:', OUT2);
+
+console.log('ERRORS:', errors.length ? JSON.stringify(errors) : 'none');
 await browser.close();

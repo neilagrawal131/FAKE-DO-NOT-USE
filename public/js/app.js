@@ -610,6 +610,230 @@ function initPortfolioInteractions() {
 }
 
 // ---------------------------------------------------------------------------
+// View navigation (rail tabs)
+// ---------------------------------------------------------------------------
+function initNav() {
+  $('#rail').addEventListener('click', (e) => {
+    const btn = e.target.closest('.rail-item');
+    if (btn) setView(btn.dataset.view);
+  });
+}
+
+function setView(view) {
+  $$('.rail-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  $$('.view').forEach((v) => {
+    const on = v.id === `view-${view}`;
+    v.classList.toggle('active', on);
+    v.hidden = !on;
+  });
+  // Nudge the chart to re-fit after being unhidden.
+  if (view === 'trade' && state.chart) {
+    requestAnimationFrame(() => state.chart.chart.timeScale().fitContent());
+  }
+}
+
+async function showConfig() {
+  try {
+    const cfg = await api('/api/config');
+    $('#rail-source').textContent = cfg.source === 'mock' ? 'demo data' : 'live data';
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI Analyst (scenario backtesting)
+// ---------------------------------------------------------------------------
+const ANALYST_EXAMPLES = [
+  'In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?',
+  'In semiconductors over the last year, when a chip crosses below its 50-day EMA',
+  'Energy stocks in the past 3 months when volume is over 5m and the stock drops 4%',
+  'Technology in the past year when price crosses above the 20-day moving average',
+];
+
+const sPct = (n) => (n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
+const pctOnly = (n) => (n == null ? '—' : `${n.toFixed(1)}%`);
+
+function initAnalyst() {
+  $('#query-examples').innerHTML = ANALYST_EXAMPLES.map(
+    (q) => `<button class="example-chip" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`
+  ).join('');
+
+  $('#query-examples').addEventListener('click', (e) => {
+    const chip = e.target.closest('.example-chip');
+    if (!chip) return;
+    $('#analyst-query').value = chip.dataset.q;
+    runAnalysis();
+  });
+
+  $('#run-analysis').addEventListener('click', runAnalysis);
+  $('#analyst-query').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') runAnalysis();
+  });
+}
+
+async function runAnalysis() {
+  const query = $('#analyst-query').value.trim();
+  const out = $('#analyst-results');
+  if (!query) {
+    out.innerHTML = '<div class="no-results">Type a scenario above, or tap an example.</div>';
+    return;
+  }
+  const btn = $('#run-analysis');
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.innerHTML = '<span class="spinner"></span> Analyzing…';
+  out.innerHTML = '<div class="loading"><span class="spinner"></span> Scanning historical data across the sector…</div>';
+
+  try {
+    const res = await api('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    renderAnalysis(res);
+  } catch (err) {
+    out.innerHTML = `<div class="no-results">Analysis failed: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function renderAnalysis(res) {
+  const out = $('#analyst-results');
+  const parts = [];
+
+  parts.push(
+    `<div class="interp"><span class="interp-label">Interpreted as</span><br/>${escapeHtml(res.interpretation)}</div>`
+  );
+
+  if (res.warnings && res.warnings.length) {
+    parts.push(`<div class="warn-box">${res.warnings.map((w) => `<div>⚠︎ ${escapeHtml(w)}</div>`).join('')}</div>`);
+  }
+
+  parts.push(
+    `<div class="universe-note">Scanned <b>${res.universe.symbolsWithData}</b> of ${res.universe.symbolsRequested} ${escapeHtml(
+      res.universe.label
+    )} stocks · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}.</div>`
+  );
+
+  const primary = res.horizonStats.find((h) => h.days === res.primaryHorizon) || res.horizonStats[0];
+
+  if (!res.triggers || !primary || !primary.n) {
+    parts.push(
+      '<div class="no-results">No occurrences of this scenario were found in the selected window. Try loosening the conditions or widening the time period.</div>'
+    );
+    out.innerHTML = parts.join('');
+    return;
+  }
+
+  // Headline verdict (primary horizon)
+  parts.push(`
+    <div class="verdict">
+      <div class="verdict-side up">
+        <div class="verdict-pct">${pctOnly(primary.pctUp)}</div>
+        <div class="verdict-cap">of the time it <b>rose</b> over the next ${primary.days} trading days</div>
+        <div class="verdict-move up">average gain ${sPct(primary.avgUp)}</div>
+      </div>
+      <div class="verdict-side down">
+        <div class="verdict-pct">${pctOnly(primary.pctDown)}</div>
+        <div class="verdict-cap">of the time it <b>fell</b> over the next ${primary.days} trading days</div>
+        <div class="verdict-move down">average drop ${sPct(primary.avgDown)}</div>
+      </div>
+    </div>`);
+
+  // Up/down proportion bar
+  const upW = primary.pctUp || 0;
+  parts.push(
+    `<div class="updown-bar"><div class="seg-up" style="width:${upW}%"></div><div class="seg-down" style="width:${100 - upW}%"></div></div>`
+  );
+
+  // Plain-English summary
+  const avgClass = primary.avg >= 0 ? 'up' : 'down';
+  parts.push(`
+    <div class="summary-line">
+      Across <b>${primary.n}</b> historical occurrences, the average move over the next
+      ${primary.days} trading days was <b class="${avgClass}">${sPct(primary.avg)}</b>
+      (median ${sPct(primary.median)}). Best case <b class="up">${sPct(primary.best)}</b>,
+      worst case <b class="down">${sPct(primary.worst)}</b>.
+    </div>`);
+
+  // Horizon breakdown table
+  const rows = res.horizonStats
+    .filter((h) => h.n)
+    .map(
+      (h) => `
+      <tr class="${h.days === res.primaryHorizon ? 'primary' : ''}">
+        <td>${h.days}d</td>
+        <td>${h.n}</td>
+        <td class="up">${pctOnly(h.pctUp)}</td>
+        <td class="up">${sPct(h.avgUp)}</td>
+        <td class="down">${pctOnly(h.pctDown)}</td>
+        <td class="down">${sPct(h.avgDown)}</td>
+        <td class="${h.avg >= 0 ? 'up' : 'down'}">${sPct(h.avg)}</td>
+        <td>${sPct(h.median)}</td>
+      </tr>`
+    )
+    .join('');
+  parts.push(`
+    <div class="result-block">
+      <h3>Outcome by forward horizon</h3>
+      <div style="overflow-x:auto">
+      <table class="h-table">
+        <thead><tr>
+          <th>Horizon</th><th>Occurrences</th><th>% up</th><th>Avg gain</th>
+          <th>% down</th><th>Avg drop</th><th>Avg move</th><th>Median</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      </div>
+    </div>`);
+
+  // Top contributors
+  if (res.bySymbol && res.bySymbol.length) {
+    parts.push(`
+      <div class="result-block">
+        <h3>Which stocks triggered most</h3>
+        <div class="chip-row">
+          ${res.bySymbol.slice(0, 20).map((s) => `<span class="sym-chip"><b>${s.symbol}</b> ${s.count}</span>`).join('')}
+        </div>
+      </div>`);
+  }
+
+  // Sample events
+  if (res.sample && res.sample.length) {
+    const evRows = res.sample
+      .map(
+        (e) => `
+        <tr>
+          <td>${e.date}</td>
+          <td>${e.symbol}</td>
+          <td>${usd(e.entry)}</td>
+          <td class="${e.primaryReturn >= 0 ? 'up' : 'down'}">${sPct(e.primaryReturn)}</td>
+        </tr>`
+      )
+      .join('');
+    parts.push(`
+      <div class="result-block">
+        <h3>Recent occurrences (return over ${res.primaryHorizon} days)</h3>
+        <div class="ev-scroll" style="overflow-x:auto">
+        <table class="ev-table">
+          <thead><tr><th>Date</th><th>Symbol</th><th>Entry</th><th>${res.primaryHorizon}d return</th></tr></thead>
+          <tbody>${evRows}</tbody>
+        </table>
+        </div>
+      </div>`);
+  }
+
+  parts.push(
+    '<div class="disclaimer-sm">Backtest over historical NYSE/NASDAQ data — past behavior does not predict future results. For education only, not investment advice.</div>'
+  );
+
+  out.innerHTML = parts.join('');
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 function initQuickPicks() {
@@ -621,11 +845,14 @@ function initQuickPicks() {
 }
 
 function boot() {
+  initNav();
   initSearch();
   initChartControls();
   initTradePanel();
   initPortfolioInteractions();
   initQuickPicks();
+  initAnalyst();
+  showConfig();
   refreshPortfolio();
   // Periodically re-mark the portfolio to live prices.
   setInterval(refreshPortfolio, 30_000);
