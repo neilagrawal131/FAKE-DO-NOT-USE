@@ -1,0 +1,20 @@
+{
+  "name": "paper-trader",
+  "version": "1.0.0",
+  "description": "Paper trading stock simulator with real NYSE/NASDAQ market data, live charts, and technical indicators (EMA, VWAP, volume, market cap).",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "postinstall": "node scripts/vendor.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "lightweight-charts": "4.2.0"
+  },
+  "license": "MIT"
+}

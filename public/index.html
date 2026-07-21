@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Paper Trader — NYSE &amp; NASDAQ Simulator</title>
+    <link rel="preconnect" href="https://query1.finance.yahoo.com" />
+    <link rel="stylesheet" href="/css/styles.css" />
+    <script src="/vendor/lightweight-charts.standalone.production.js" defer></script>
+    <script type="module" src="/js/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">▲▼</span>
+        <div>
+          <div class="brand-name">Paper Trader</div>
+          <div class="brand-sub">NYSE · NASDAQ · virtual money</div>
+        </div>
+      </div>
+
+      <div class="search" id="search">
+        <input
+          id="search-input"
+          type="text"
+          placeholder="Search a stock — ticker or company (e.g. AAPL, Tesla)…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="search-results" id="search-results" hidden></div>
+      </div>
+
+      <div class="account-pill" id="account-pill" title="Total account equity">
+        <span class="account-label">Equity</span>
+        <span class="account-value" id="account-equity">—</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- Portfolio sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="card summary-card">
+          <div class="summary-head">
+            <h2>Portfolio</h2>
+            <button class="btn-ghost" id="reset-btn" title="Reset to $100,000 cash">
+              Reset
+            </button>
+          </div>
+          <div class="summary-grid" id="summary-grid"><!-- tiles injected --></div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Positions</h3>
+          <div id="positions"><div class="empty">No open positions.</div></div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Order history</h3>
+          <div id="orders"><div class="empty">No orders yet.</div></div>
+        </div>
+      </aside>
+
+      <!-- Main content -->
+      <section class="content" id="content">
+        <div class="welcome" id="welcome">
+          <h1>Trade the market with virtual money.</h1>
+          <p>
+            Search any NYSE or NASDAQ stock to see live charts with volume, VWAP and
+            20 / 50 / 100 EMAs, plus fundamentals like market cap and P/E — then
+            practice buying and selling with a $100,000 paper account.
+          </p>
+          <div class="quick-picks" id="quick-picks"></div>
+        </div>
+
+        <article class="detail" id="detail" hidden>
+          <div class="detail-head">
+            <div class="ticker-block">
+              <div class="ticker-line">
+                <span class="ticker-symbol" id="d-symbol">—</span>
+                <span class="ticker-exchange" id="d-exchange"></span>
+              </div>
+              <div class="ticker-name" id="d-name"></div>
+            </div>
+            <div class="price-block">
+              <span class="price-now" id="d-price">—</span>
+              <span class="price-change" id="d-change"></span>
+            </div>
+          </div>
+
+          <div class="chart-toolbar">
+            <div class="timeframes" id="timeframes">
+              <button data-tf="1D">1D</button>
+              <button data-tf="5D">5D</button>
+              <button data-tf="1M" class="active">1M</button>
+              <button data-tf="6M">6M</button>
+              <button data-tf="1Y">1Y</button>
+              <button data-tf="5Y">5Y</button>
+            </div>
+            <div class="indicator-toggles" id="indicator-toggles">
+              <label><input type="checkbox" data-ind="ema20" checked /><span class="sw ema20"></span>EMA 20</label>
+              <label><input type="checkbox" data-ind="ema50" checked /><span class="sw ema50"></span>EMA 50</label>
+              <label><input type="checkbox" data-ind="ema100" checked /><span class="sw ema100"></span>EMA 100</label>
+              <label><input type="checkbox" data-ind="vwap" checked /><span class="sw vwap"></span>VWAP</label>
+            </div>
+          </div>
+
+          <div class="chart-wrap">
+            <div class="chart-legend" id="chart-legend"></div>
+            <div class="chart" id="chart"></div>
+          </div>
+
+          <div class="detail-lower">
+            <div class="card info-card">
+              <h3 class="card-title">Key statistics</h3>
+              <div class="stat-grid" id="stat-grid"></div>
+              <div class="profile" id="profile"></div>
+            </div>
+
+            <div class="card trade-card">
+              <h3 class="card-title">Trade</h3>
+              <div class="trade-toggle">
+                <button class="active" data-side="buy" id="buy-tab">Buy</button>
+                <button data-side="sell" id="sell-tab">Sell</button>
+              </div>
+              <label class="field">
+                <span>Shares</span>
+                <input id="shares-input" type="number" min="0" step="1" value="1" />
+              </label>
+              <div class="quantity-quick" id="qty-quick"></div>
+              <div class="trade-est" id="trade-est"></div>
+              <button class="btn-primary" id="submit-order">Buy</button>
+              <div class="trade-msg" id="trade-msg"></div>
+              <div class="buying-power" id="buying-power"></div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" hidden></div>
+  </body>
+</html>

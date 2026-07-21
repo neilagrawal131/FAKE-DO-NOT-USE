@@ -1,0 +1,6 @@
+node_modules/
+data/portfolio.json
+public/vendor/
+*.log
+.DS_Store
+.env
