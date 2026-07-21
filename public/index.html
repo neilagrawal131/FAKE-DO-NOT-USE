@@ -159,9 +159,9 @@
             <header class="analyst-head">
               <h1>🤖 AI Market Analyst</h1>
               <p>
-                Describe a market scenario in plain English. I'll backtest it across real
-                NYSE/NASDAQ history for that sector and tell you what usually happened next —
-                how often the stock rose or fell, and by how much.
+                Describe a market scenario in plain English — for a single stock or a whole
+                sector. I'll backtest it across real NYSE/NASDAQ history and tell you what
+                usually happened next: how often the stock rose or fell, and by how much.
               </p>
             </header>
 
@@ -169,11 +169,11 @@
               <textarea
                 id="analyst-query"
                 rows="3"
-                placeholder="e.g. In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?"
+                placeholder="e.g. Analyze NVDA over the past 2 years — when it crosses above its 50-day EMA with volume over 100,000, what happens over the next 20 days?"
               ></textarea>
               <div class="query-examples" id="query-examples"></div>
               <div class="query-actions">
-                <span class="query-hint">Tip: name a <b>sector</b>, a <b>time window</b>, and a <b>trigger</b> (moving-average cross, volume, % move).</span>
+                <span class="query-hint">Tip: name a <b>stock</b> (e.g. NVDA) or a <b>sector</b>, a <b>time window</b> ("past 2 years"), a <b>trigger</b> (MA cross, volume, % move), and a <b>forward horizon</b> ("over the next 20 days").</span>
                 <button class="btn-primary" id="run-analysis">Analyze scenario</button>
               </div>
             </div>

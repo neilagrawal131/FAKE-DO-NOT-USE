@@ -3,7 +3,7 @@
 // the user exactly how it interpreted their request, and every field can be
 // overridden from the UI.
 
-import { resolveSector, sectorLabel } from './universe.js';
+import { resolveSector, sectorLabel, resolveSymbol } from './universe.js';
 
 const DEFAULT_HORIZONS = [1, 5, 10, 20];
 const DEFAULT_PRIMARY = 10;
@@ -15,20 +15,24 @@ export function parseScenario(text) {
   const lower = q.toLowerCase();
   const warnings = [];
 
-  // --- sector ---
-  let sectorKey = resolveSector(lower);
-  if (!sectorKey) {
-    sectorKey = 'market';
-    warnings.push('No sector detected — analyzing a broad large-cap universe. Name a sector (e.g. "biotech", "semiconductors") to focus it.');
+  // --- scope: a specific stock takes priority over a sector ---
+  const symbol = resolveSymbol(q);
+  let sectorKey = null;
+  if (!symbol) {
+    sectorKey = resolveSector(lower);
+    if (!sectorKey) {
+      sectorKey = 'market';
+      warnings.push('No stock or sector detected — analyzing a broad large-cap universe. Name a ticker (e.g. "NVDA") or a sector (e.g. "biotech") to focus it.');
+    }
   }
 
-  // --- lookback period ---
+  // --- lookback period (how far back to analyze) ---
   let lookbackDays = DEFAULT_LOOKBACK_DAYS;
-  const lb = lower.match(/(?:past|last|previous|over(?:\s+the)?|within(?:\s+the)?)\s+(\d+)\s*[-\s]?(day|days|week|weeks|month|months|year|years|yr|yrs)/);
+  const lb = lower.match(/(?:past|last|previous|prior|trailing|recent|over(?:\s+the)?|within(?:\s+the)?|during(?:\s+the)?)\s+(\d+)?\s*[-\s]?(day|days|week|weeks|month|months|year|years|yr|yrs)/);
   if (lb) {
-    lookbackDays = toDays(parseInt(lb[1], 10), lb[2]);
+    lookbackDays = toDays(lb[1] ? parseInt(lb[1], 10) : 1, lb[2]);
   } else {
-    warnings.push('No time window detected — defaulting to the past 6 months.');
+    warnings.push('No time window detected — defaulting to the past 6 months. Add e.g. "over the past 2 years".');
   }
 
   // --- conditions ---
@@ -70,18 +74,20 @@ export function parseScenario(text) {
     warnings.push('No trigger condition detected. Try phrases like "crosses above its 100-day moving average" or "volume over 100,000".');
   }
 
-  // --- forward horizon ---
+  // --- forward horizon (how long to hold / measure the move) ---
   let primaryHorizon = DEFAULT_PRIMARY;
   const horizons = [...DEFAULT_HORIZONS];
-  const hz = lower.match(/(?:next|following|forward|over\s+the\s+next|after)\s+(\d+)\s*(day|days|week|weeks)/);
-  if (hz) {
-    const days = /week/.test(hz[2]) ? parseInt(hz[1], 10) * 5 : parseInt(hz[1], 10);
-    primaryHorizon = days;
-    if (!horizons.includes(days)) horizons.push(days);
-    horizons.sort((a, b) => a - b);
+  const parsedHorizon = parseHorizon(lower);
+  if (parsedHorizon) {
+    primaryHorizon = parsedHorizon;
+    if (!horizons.includes(parsedHorizon)) {
+      horizons.push(parsedHorizon);
+      horizons.sort((a, b) => a - b);
+    }
   }
 
   const scenario = {
+    symbol: symbol || null,
     sectorKey,
     lookbackDays,
     horizons,
@@ -94,7 +100,8 @@ export function parseScenario(text) {
 // Fill defaults / clamp a scenario coming from the UI form.
 export function normalizeScenario(s = {}) {
   const scenario = {
-    sectorKey: s.sectorKey || 'market',
+    symbol: s.symbol ? String(s.symbol).toUpperCase() : null,
+    sectorKey: s.symbol ? null : s.sectorKey || 'market',
     lookbackDays: clamp(Number(s.lookbackDays) || DEFAULT_LOOKBACK_DAYS, 20, 365 * 6),
     horizons: Array.isArray(s.horizons) && s.horizons.length ? s.horizons.map(Number).filter((n) => n > 0) : [...DEFAULT_HORIZONS],
     primaryHorizon: Number(s.primaryHorizon) || DEFAULT_PRIMARY,
@@ -117,11 +124,41 @@ export function describeScenario(s) {
     else if (c.kind === 'day_change') parts.push(`the stock ${c.dir === 'up' ? 'rises' : 'falls'} ${c.pct}%+ in a day`);
   }
   const cond = parts.length ? parts.join(' AND ') : 'any day';
-  const months = (s.lookbackDays / 30).toFixed(s.lookbackDays % 30 ? 1 : 0);
-  return `In ${sectorLabel(s.sectorKey)}, over the past ~${months} months, when ${cond} — what did the stock do over the next ${s.primaryHorizon} trading days?`;
+  const window = describeWindow(s.lookbackDays);
+  if (s.symbol) {
+    return `For ${s.symbol}, over the past ${window}, when ${cond} — what did it do over the next ${s.primaryHorizon} trading days?`;
+  }
+  return `In ${sectorLabel(s.sectorKey)}, over the past ${window}, when ${cond} — what did the stock do over the next ${s.primaryHorizon} trading days?`;
+}
+
+function describeWindow(days) {
+  if (days >= 360) {
+    const y = days / 365;
+    return `${y % 1 === 0 ? y : y.toFixed(1)} year${y >= 2 ? 's' : ''}`;
+  }
+  const m = days / 30;
+  return `~${m % 1 === 0 ? m : m.toFixed(1)} months`;
 }
 
 // ---- helpers ----
+
+// Forward horizon in *trading* days from phrasings like "over the next 20 days",
+// "after 2 weeks", "hold for 15 sessions", "10 days later", "a month out".
+function parseHorizon(s) {
+  let m = s.match(/(?:next|following|forward|over\s+the\s+(?:next|following)|after|hold(?:ing)?\s+for|held\s+for)\s+(\d+)\s*(day|days|week|weeks|month|months|session|sessions)/);
+  if (m) return horizonDays(parseInt(m[1], 10), m[2]);
+  m = s.match(/(\d+)\s*(day|days|week|weeks|month|months|session|sessions)\s+(?:later|after|out|forward|ahead)/);
+  if (m) return horizonDays(parseInt(m[1], 10), m[2]);
+  m = s.match(/\b(?:a|one)\s+(day|week|month)\s+(?:later|after|out|forward|ahead)/);
+  if (m) return horizonDays(1, m[1]);
+  return null;
+}
+function horizonDays(n, unit) {
+  if (/month/.test(unit)) return n * 21; // ~21 trading days / month
+  if (/week/.test(unit)) return n * 5; // 5 trading days / week
+  return n; // day / session
+}
+
 function toDays(n, unit) {
   if (/year|yr/.test(unit)) return n * 365;
   if (/month/.test(unit)) return n * 30;

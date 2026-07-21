@@ -91,7 +91,7 @@ function maKey(c) {
 }
 
 export async function runBacktest(scenario, provider) {
-  const symbols = sectorSymbols(scenario.sectorKey);
+  const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
   const range = fetchRange(scenario.lookbackDays);
   const nowSec = Math.floor(Date.now() / 1000);
   const cutoff = nowSec - scenario.lookbackDays * 86400;
@@ -171,7 +171,8 @@ export async function runBacktest(scenario, provider) {
     interpretation: describeScenario(scenario),
     universe: {
       sectorKey: scenario.sectorKey,
-      label: sectorLabel(scenario.sectorKey),
+      symbol: scenario.symbol || null,
+      label: scenario.symbol ? scenario.symbol : sectorLabel(scenario.sectorKey),
       symbolsRequested: symbols.length,
       symbolsWithData: withData.length,
       symbols,

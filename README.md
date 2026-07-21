@@ -8,11 +8,16 @@ rail:
   20 / 50 / 100 EMAs**, review fundamentals like **market cap, P/E and 52-week
   range**, then practice **buying and selling with a $100,000 paper account**.
 - **🤖 AI Analyst** — describe a market scenario in plain English and it
-  backtests it across real sector history, reporting **how often the stock rose
-  or fell next, and by how much**. Example: *"In the past 6 months in biotech,
-  what happens when a stock rises above its 100-day moving average with volume
-  over 100,000?"* → % up / avg gain, % down / avg drop across several forward
-  horizons.
+  backtests it across real history, reporting **how often the stock rose or fell
+  next, and by how much**. You control everything from the prompt:
+  - **A single stock or a whole sector** — "Analyze NVDA…", "$TSLA…", "Apple…", or "in biotech…".
+  - **The lookback window** — "over the past 2 years", "in the last 6 months", "past 90 days".
+  - **The forward horizon** — "over the next 20 days", "held for 2 weeks", "10 days later".
+  - **The trigger** — moving-average crosses, volume thresholds, single-day % moves.
+
+  Example: *"Analyze NVDA over the past 2 years — when it crosses above its
+  50-day EMA, what happens over the next 20 days?"* → % up / avg gain, % down /
+  avg drop across several forward horizons.
 
 No real money, no brokerage account, no API keys.
 

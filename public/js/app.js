@@ -646,9 +646,9 @@ async function showConfig() {
 // ---------------------------------------------------------------------------
 const ANALYST_EXAMPLES = [
   'In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?',
-  'In semiconductors over the last year, when a chip crosses below its 50-day EMA',
-  'Energy stocks in the past 3 months when volume is over 5m and the stock drops 4%',
-  'Technology in the past year when price crosses above the 20-day moving average',
+  'Analyze NVDA over the past 2 years: when it crosses above its 50-day EMA, what happens over the next 20 days?',
+  '$TSLA in the last year when it drops 5% in a day — measured over the next 5 days',
+  'Semiconductors over the past 3 months when volume is over 20m, held for 15 days',
 ];
 
 const sPct = (n) => (n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
@@ -712,11 +712,17 @@ function renderAnalysis(res) {
     parts.push(`<div class="warn-box">${res.warnings.map((w) => `<div>⚠︎ ${escapeHtml(w)}</div>`).join('')}</div>`);
   }
 
-  parts.push(
-    `<div class="universe-note">Scanned <b>${res.universe.symbolsWithData}</b> of ${res.universe.symbolsRequested} ${escapeHtml(
-      res.universe.label
-    )} stocks · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}.</div>`
-  );
+  if (res.universe.symbol) {
+    parts.push(
+      `<div class="universe-note">Analyzed <b>${escapeHtml(res.universe.symbol)}</b> over the window · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}.</div>`
+    );
+  } else {
+    parts.push(
+      `<div class="universe-note">Scanned <b>${res.universe.symbolsWithData}</b> of ${res.universe.symbolsRequested} ${escapeHtml(
+        res.universe.label
+      )} stocks · found <b>${res.triggers}</b> matching occurrence${res.triggers === 1 ? '' : 's'}.</div>`
+    );
+  }
 
   const primary = res.horizonStats.find((h) => h.days === res.primaryHorizon) || res.horizonStats[0];
 
@@ -790,8 +796,8 @@ function renderAnalysis(res) {
       </div>
     </div>`);
 
-  // Top contributors
-  if (res.bySymbol && res.bySymbol.length) {
+  // Top contributors (only meaningful across a multi-stock universe)
+  if (!res.universe.symbol && res.bySymbol && res.bySymbol.length) {
     parts.push(`
       <div class="result-block">
         <h3>Which stocks triggered most</h3>

@@ -72,6 +72,67 @@ export function resolveSector(text) {
   return best;
 }
 
+// ---- single-ticker resolution -------------------------------------------------
+
+// Every symbol we know about (union of all sector universes) for bareword matching.
+export const KNOWN_TICKERS = new Set(
+  Object.values(SECTORS).flatMap((s) => s.symbols)
+);
+
+// Common company names -> ticker, so "analyze Apple" works as well as "AAPL".
+export const NAME_TO_TICKER = {
+  apple: 'AAPL', microsoft: 'MSFT', google: 'GOOGL', alphabet: 'GOOGL',
+  amazon: 'AMZN', meta: 'META', facebook: 'META', tesla: 'TSLA',
+  nvidia: 'NVDA', netflix: 'NFLX', 'advanced micro devices': 'AMD',
+  intel: 'INTC', broadcom: 'AVGO', qualcomm: 'QCOM', micron: 'MU',
+  moderna: 'MRNA', biontech: 'BNTX', 'vertex': 'VRTX', regeneron: 'REGN',
+  gilead: 'GILD', amgen: 'AMGN', biogen: 'BIIB', illumina: 'ILMN',
+  salesforce: 'CRM', adobe: 'ADBE', oracle: 'ORCL', palantir: 'PLTR',
+  uber: 'UBER', airbnb: 'ABNB', shopify: 'SHOP', snowflake: 'SNOW',
+  'coca cola': 'KO', 'coca-cola': 'KO', pepsi: 'PEP', pepsico: 'PEP',
+  disney: 'DIS', walmart: 'WMT', costco: 'COST', target: 'TGT',
+  starbucks: 'SBUX', nike: 'NKE', mcdonalds: 'MCD', "mcdonald's": 'MCD',
+  boeing: 'BA', caterpillar: 'CAT', jpmorgan: 'JPM', 'jp morgan': 'JPM',
+  'bank of america': 'BAC', goldman: 'GS', 'goldman sachs': 'GS',
+  exxon: 'XOM', chevron: 'CVX', ford: 'F', 'general motors': 'GM',
+};
+
+// Uppercase tokens that look like tickers but almost never are the target here.
+const TICKER_STOPWORDS = new Set([
+  'MA', 'EMA', 'SMA', 'US', 'USA', 'AI', 'ETF', 'IPO', 'CEO', 'YTD', 'NYSE',
+  'NASDAQ', 'PE', 'EPS', 'MACD', 'RSI', 'ATH', 'AND', 'OR', 'THE', 'IN', 'ON',
+  'IT', 'AT', 'OF', 'TO', 'VS', 'ADR', 'API',
+]);
+
+// Detect a specific stock in free text. Priority: $cashtag > company name >
+// an uppercase bareword that matches a known ticker. Returns a ticker or null.
+export function resolveSymbol(text) {
+  const raw = String(text || '');
+
+  const cash = raw.match(/\$([A-Za-z]{1,5})\b/);
+  if (cash) return cash[1].toUpperCase();
+
+  const lower = raw.toLowerCase();
+  let best = null;
+  let bestLen = 0;
+  for (const [name, tk] of Object.entries(NAME_TO_TICKER)) {
+    const re = new RegExp(`\\b${name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+    if (re.test(lower) && name.length > bestLen) {
+      best = tk;
+      bestLen = name.length;
+    }
+  }
+  if (best) return best;
+
+  // Uppercase 2-5 letter tokens (case-sensitive) that are known tickers.
+  const tokens = raw.match(/\b[A-Z]{2,5}\b/g) || [];
+  for (const tok of tokens) {
+    if (TICKER_STOPWORDS.has(tok)) continue;
+    if (KNOWN_TICKERS.has(tok)) return tok;
+  }
+  return null;
+}
+
 export function sectorList() {
   return Object.entries(SECTORS).map(([key, s]) => ({
     key,
