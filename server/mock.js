@@ -19,7 +19,20 @@ const CATALOG = [
   { symbol: 'NKE', name: 'NIKE, Inc.', exchange: 'NYSE', base: 75, cap: 1.1e11, sector: 'Consumer Cyclical', industry: 'Footwear & Accessories' },
 ];
 
+import { normalizeSpread } from './yahoo.js';
+
 const bySymbol = new Map(CATALOG.map((c) => [c.symbol, c]));
+
+// A stable per-symbol half-spread in basis points (2–12 bps) so each stock has
+// its own realistic spread. Cheaper/large-cap names get tighter spreads.
+function spreadFor(symbol, price) {
+  const c = bySymbol.get(symbol);
+  const rand = mulberry32(seedFor(symbol) ^ 0x5f3759df);
+  const capT = (c?.cap || 5e10) / 1e12;
+  const bps = 2 + rand() * 10 - Math.min(4, capT); // wider for small caps
+  const half = Math.max(0.01, (price * Math.max(1, bps)) / 20000);
+  return normalizeSpread(price, price - half, price + half);
+}
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -114,12 +127,19 @@ export async function quote(symbol) {
   const prev = intraday[intraday.length - 2] || { close: last.open };
   const rand = mulberry32(seedFor(symbol));
   const eps = +(last.close / (12 + rand() * 25)).toFixed(2);
+  const sp = spreadFor(symbol, last.close);
   return {
     symbol,
     name: c.name,
     exchange: `${c.exchange} (simulated)`,
     currency: 'USD',
     price: last.close,
+    bid: sp.bid,
+    ask: sp.ask,
+    bidSize: Math.round(1 + rand() * 40) * 100,
+    askSize: Math.round(1 + rand() * 40) * 100,
+    spread: +(sp.ask - sp.bid).toFixed(4),
+    spreadEstimated: false,
     previousClose: prev.close,
     change: last.close - prev.close,
     changePercent: ((last.close - prev.close) / prev.close) * 100,
@@ -152,7 +172,15 @@ export async function quote(symbol) {
 export async function lastPrice(symbol) {
   const ch = await chart(symbol, '1d');
   const last = ch.bars[ch.bars.length - 1];
-  return { symbol: symbol.toUpperCase(), price: last.close, previousClose: ch.meta.previousClose };
+  const sp = spreadFor(symbol.toUpperCase(), last.close);
+  return {
+    symbol: symbol.toUpperCase(),
+    price: last.close,
+    previousClose: ch.meta.previousClose,
+    bid: sp.bid,
+    ask: sp.ask,
+    spreadEstimated: false,
+  };
 }
 
 function avg(a) {

@@ -82,14 +82,23 @@ app.post(
     if (!symbol || !side || !shares) {
       return res.status(400).json({ error: 'side, symbol and shares are required' });
     }
-    // Always fill at the current live price — never trust a client-supplied price.
-    const { price } = await yahoo.lastPrice(symbol);
-    if (!price) return res.status(502).json({ error: 'Could not fetch a live price to fill order' });
+    // Fetch the live quote and fill in line with the spread: a market BUY pays
+    // the ASK, a market SELL receives the BID — never a client-supplied price.
+    const q = await yahoo.lastPrice(symbol);
+    const fillPrice = side === 'buy' ? q.ask : q.bid;
+    if (!fillPrice) {
+      return res
+        .status(502)
+        .json({ error: 'No live bid/ask available to fill this order right now' });
+    }
     const order = portfolio.trade({
       side,
       symbol,
       shares,
-      price,
+      price: fillPrice,
+      bid: q.bid,
+      ask: q.ask,
+      spreadEstimated: q.spreadEstimated,
       ts: Math.floor(Date.now() / 1000),
     });
     const marks = await priceMap(portfolio.heldSymbols());

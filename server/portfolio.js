@@ -66,7 +66,7 @@ export function reset() {
 
 // Execute a market order at the supplied (live) price. `ts` is passed in by the
 // caller so this module stays free of wall-clock reads.
-export function trade({ side, symbol, shares, price, ts }) {
+export function trade({ side, symbol, shares, price, ts, bid = null, ask = null, spreadEstimated = false }) {
   const s = load();
   symbol = symbol.toUpperCase();
   shares = Number(shares);
@@ -112,6 +112,9 @@ export function trade({ side, symbol, shares, price, ts }) {
     shares,
     price,
     amount,
+    bid,
+    ask,
+    spreadEstimated,
   };
   s.orders.unshift(order);
   if (s.orders.length > 500) s.orders.length = 500;

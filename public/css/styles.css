@@ -203,6 +203,21 @@ input { font-family: inherit; }
 .price-block { text-align: right; }
 .price-now { font-size: 30px; font-weight: 800; }
 .price-change { display: block; font-size: 15px; font-weight: 600; margin-top: 2px; }
+.price-spread { display: block; font-size: 12px; color: var(--text-dim); margin-top: 6px; }
+.price-spread .bid { color: var(--up); font-weight: 700; }
+.price-spread .ask { color: var(--down); font-weight: 700; }
+.price-spread .est { color: var(--text-faint); font-style: italic; }
+
+.tf-block { display: inline-flex; align-items: center; gap: 10px; }
+.tf-interval { font-size: 12px; color: var(--text-faint); white-space: nowrap; }
+
+.fill-note {
+  font-size: 12px; color: var(--text-dim); margin-bottom: 10px;
+  padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+}
+.fill-note .px { font-weight: 700; }
+.fill-note .buy-px { color: var(--down); }
+.fill-note .sell-px { color: var(--up); }
 
 .chart-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; }
 .timeframes { display: inline-flex; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }

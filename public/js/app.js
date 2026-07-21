@@ -63,6 +63,14 @@ const state = {
 };
 
 const INTRADAY_TF = new Set(['1D', '5D', '1M']);
+const TF_INTERVAL = {
+  '1D': '1-minute bars',
+  '5D': '5-minute bars',
+  '1M': '30-minute bars',
+  '6M': 'daily bars',
+  '1Y': 'daily bars',
+  '5Y': 'weekly bars',
+};
 const QUICK_PICKS = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'AMD'];
 
 // ---------------------------------------------------------------------------
@@ -205,6 +213,7 @@ async function loadChart(symbol, tf) {
   const data = await api(`/api/chart/${symbol}?tf=${tf}`);
   const intraday = INTRADAY_TF.has(tf);
   state.chart.setBars(data.bars, { intraday });
+  $('#tf-interval').textContent = TF_INTERVAL[tf] || '';
   updateLegend(null);
   return data;
 }
@@ -220,10 +229,38 @@ function renderHeader(q) {
   const arrow = q.change == null ? '' : q.change >= 0 ? '▲' : '▼';
   changeEl.textContent =
     q.change == null ? '' : `${arrow} ${usd(Math.abs(q.change))} (${pct(q.changePercent)})`;
+
+  renderSpreadLine(q);
+}
+
+function spreadPct(q) {
+  if (q.bid == null || q.ask == null || !q.price) return null;
+  return ((q.ask - q.bid) / q.price) * 100;
+}
+
+function renderSpreadLine(q) {
+  const el = $('#d-spread');
+  if (q.bid == null || q.ask == null) {
+    el.innerHTML = '';
+    return;
+  }
+  const sp = q.ask - q.bid;
+  const spPct = spreadPct(q);
+  el.innerHTML =
+    `Bid <span class="bid">${usd(q.bid)}</span>` +
+    `${q.bidSize ? ` ×${num(q.bidSize / 100, 0)}` : ''}` +
+    ` &nbsp;·&nbsp; Ask <span class="ask">${usd(q.ask)}</span>` +
+    `${q.askSize ? ` ×${num(q.askSize / 100, 0)}` : ''}` +
+    ` &nbsp;·&nbsp; Spread ${usd(sp)}${spPct != null ? ` (${spPct.toFixed(2)}%)` : ''}` +
+    `${q.spreadEstimated ? ' <span class="est">est.</span>' : ''}`;
 }
 
 function renderStats(q) {
+  const spPct = spreadPct(q);
   const rows = [
+    ['Bid', q.bid != null ? `${usd(q.bid)}${q.bidSize ? ` ×${num(q.bidSize / 100, 0)}` : ''}` : '—'],
+    ['Ask', q.ask != null ? `${usd(q.ask)}${q.askSize ? ` ×${num(q.askSize / 100, 0)}` : ''}` : '—'],
+    ['Spread', q.bid != null && q.ask != null ? `${usd(q.ask - q.bid)}${spPct != null ? ` (${spPct.toFixed(2)}%)` : ''}` : '—'],
     ['Market cap', compact(q.marketCap)],
     ['Volume', compact(q.volume)],
     ['Avg volume', compact(q.avgVolume)],
@@ -370,18 +407,27 @@ function heldShares(symbol) {
   return pos ? pos.shares : 0;
 }
 
+// The price a market order will fill at: buys pay the ask, sells hit the bid.
+function fillPrice() {
+  const q = state.quote;
+  if (!q) return 0;
+  return state.side === 'buy' ? q.ask ?? q.price ?? 0 : q.bid ?? q.price ?? 0;
+}
+
 function applyQuickQty(qv) {
   const q = state.quote;
-  if (!q || !q.price) return;
+  if (!q) return;
+  const px = fillPrice();
+  if (!px) return;
   const input = $('#shares-input');
   const buyingPower = window.__portfolio?.cash ?? 0;
   const held = heldShares(state.symbol);
 
-  if (qv === 'Max') input.value = Math.floor(buyingPower / q.price);
+  if (qv === 'Max') input.value = Math.floor(buyingPower / px);
   else if (qv === 'All') input.value = held;
   else if (qv.endsWith('%')) {
     const frac = parseInt(qv) / 100;
-    if (state.side === 'buy') input.value = Math.floor((buyingPower * frac) / q.price);
+    if (state.side === 'buy') input.value = Math.floor((buyingPower * frac) / px);
     else input.value = Math.floor(held * frac);
   } else input.value = qv;
 
@@ -391,8 +437,21 @@ function applyQuickQty(qv) {
 function renderTradeEstimate() {
   const q = state.quote;
   const shares = Number($('#shares-input').value) || 0;
-  const price = q?.price ?? 0;
-  const cost = shares * price;
+  const px = fillPrice();
+  const cost = shares * px;
+
+  // Explain, per the spread, exactly what price the order fills at.
+  const note = $('#fill-note');
+  if (q && (q.bid != null || q.ask != null)) {
+    if (state.side === 'buy') {
+      note.innerHTML = `Market buys fill at the <b>ask</b>: <span class="px buy-px">${usd(q.ask)}</span>${q.spreadEstimated ? ' <span style="color:var(--text-faint)">(est.)</span>' : ''}`;
+    } else {
+      note.innerHTML = `Market sells fill at the <b>bid</b>: <span class="px sell-px">${usd(q.bid)}</span>${q.spreadEstimated ? ' <span style="color:var(--text-faint)">(est.)</span>' : ''}`;
+    }
+  } else {
+    note.innerHTML = '';
+  }
+
   $('#trade-est').innerHTML = `
     <span class="est-label">Estimated ${state.side === 'buy' ? 'cost' : 'proceeds'}</span>
     <span class="est-value">${usd(cost)}</span>`;

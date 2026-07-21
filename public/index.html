@@ -84,17 +84,21 @@
             <div class="price-block">
               <span class="price-now" id="d-price">—</span>
               <span class="price-change" id="d-change"></span>
+              <span class="price-spread" id="d-spread"></span>
             </div>
           </div>
 
           <div class="chart-toolbar">
-            <div class="timeframes" id="timeframes">
-              <button data-tf="1D">1D</button>
-              <button data-tf="5D">5D</button>
-              <button data-tf="1M" class="active">1M</button>
-              <button data-tf="6M">6M</button>
-              <button data-tf="1Y">1Y</button>
-              <button data-tf="5Y">5Y</button>
+            <div class="tf-block">
+              <div class="timeframes" id="timeframes">
+                <button data-tf="1D" title="1-minute candles">1D</button>
+                <button data-tf="5D" title="5-minute candles">5D</button>
+                <button data-tf="1M" class="active" title="30-minute candles">1M</button>
+                <button data-tf="6M" title="Daily candles">6M</button>
+                <button data-tf="1Y" title="Daily candles">1Y</button>
+                <button data-tf="5Y" title="Weekly candles">5Y</button>
+              </div>
+              <span class="tf-interval" id="tf-interval"></span>
             </div>
             <div class="indicator-toggles" id="indicator-toggles">
               <label><input type="checkbox" data-ind="ema20" checked /><span class="sw ema20"></span>EMA 20</label>
@@ -127,6 +131,7 @@
                 <input id="shares-input" type="number" min="0" step="1" value="1" />
               </label>
               <div class="quantity-quick" id="qty-quick"></div>
+              <div class="fill-note" id="fill-note"></div>
               <div class="trade-est" id="trade-est"></div>
               <button class="btn-primary" id="submit-order">Buy</button>
               <div class="trade-msg" id="trade-msg"></div>

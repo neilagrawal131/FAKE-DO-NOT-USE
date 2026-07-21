@@ -32,9 +32,14 @@ const info = await page.evaluate(() => ({
   exchange: document.querySelector('#d-exchange').textContent,
   stats: document.querySelectorAll('#stat-grid .stat').length,
   legend: document.querySelector('#chart-legend').textContent.trim().slice(0, 80),
+  spread: document.querySelector('#d-spread').textContent.trim(),
+  interval: document.querySelector('#tf-interval').textContent.trim(),
   hasCanvas: !!document.querySelector('#chart canvas'),
 }));
 console.log('DETAIL:', JSON.stringify(info));
+
+const buyNote = await page.evaluate(() => document.querySelector('#fill-note').textContent.trim());
+console.log('BUY FILL NOTE:', buyNote);
 
 // Place a buy order.
 await page.fill('#shares-input', '15');

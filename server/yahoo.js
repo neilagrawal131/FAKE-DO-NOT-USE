@@ -124,6 +124,25 @@ export function isSupportedExchange(code) {
   return Boolean(EXCHANGES[code]);
 }
 
+// Normalise a bid/ask pair. Real quotes are used when present and sane; when the
+// market is closed (or the feed returns zeros / a crossed book) we model a tight
+// spread around the last price so the trade mechanic still works, and flag it as
+// estimated. Half-spread ≈ 5 bps, floored at 1 cent.
+export function normalizeSpread(price, bid, ask) {
+  const b = Number.isFinite(bid) && bid > 0 ? bid : null;
+  const a = Number.isFinite(ask) && ask > 0 ? ask : null;
+  if (b != null && a != null && a >= b) {
+    return { bid: b, ask: a, mid: (a + b) / 2, estimated: false };
+  }
+  if (!Number.isFinite(price) || price <= 0) {
+    return { bid: null, ask: null, mid: null, estimated: true };
+  }
+  const half = Math.max(0.01, price * 0.0005);
+  const nb = Math.max(0.01, +(price - half).toFixed(2));
+  const na = +(price + half).toFixed(2);
+  return { bid: nb, ask: na, mid: +price.toFixed(2), estimated: true };
+}
+
 // ---- public API ---------------------------------------------------------------
 
 // Symbol search, filtered to NYSE/NASDAQ equities.
@@ -254,12 +273,21 @@ export async function quote(symbol) {
 
   const val = (x) => (x && typeof x === 'object' ? (x.raw ?? null) : (x ?? null));
 
+  const livePrice = val(price.regularMarketPrice) ?? base.regularMarketPrice ?? null;
+  const spread = normalizeSpread(livePrice, val(detail.bid), val(detail.ask));
+
   const out = {
     symbol: sym,
     name: val(price.longName) || val(price.shortName) || sym,
     exchange: exchangeName(price.exchangeName) || base.exchange || null,
     currency: val(price.currency) || base.currency || 'USD',
-    price: val(price.regularMarketPrice) ?? base.regularMarketPrice ?? null,
+    price: livePrice,
+    bid: spread.bid,
+    ask: spread.ask,
+    bidSize: val(detail.bidSize),
+    askSize: val(detail.askSize),
+    spread: spread.bid != null && spread.ask != null ? +(spread.ask - spread.bid).toFixed(4) : null,
+    spreadEstimated: spread.estimated,
     previousClose:
       val(price.regularMarketPreviousClose) ?? base.previousClose ?? null,
     change: val(price.regularMarketChange),
@@ -293,13 +321,39 @@ export async function quote(symbol) {
   return out;
 }
 
-// Lightweight, batchable last-price lookup for portfolio marking.
+// Last price + live bid/ask, used for portfolio marking and spread-aware fills.
+// Prefers the rich quote (real bid/ask) and falls back to the chart endpoint.
 export async function lastPrice(symbol) {
-  const ch = await chart(symbol, '1d', '1m');
-  const last = ch.bars.length ? ch.bars[ch.bars.length - 1].close : null;
+  const sym = symbol.toUpperCase();
+  let price = null;
+  let previousClose = null;
+  let bid = null;
+  let ask = null;
+
+  try {
+    const q = await quote(sym); // cached ~60s
+    price = q.price;
+    previousClose = q.previousClose;
+    bid = q.bid;
+    ask = q.ask;
+  } catch {
+    /* fall back to chart below */
+  }
+
+  if (price == null) {
+    const ch = await chart(sym, '1d', '1m');
+    const last = ch.bars.length ? ch.bars[ch.bars.length - 1].close : null;
+    price = ch.meta.regularMarketPrice ?? last;
+    previousClose = ch.meta.previousClose ?? null;
+  }
+
+  const spread = normalizeSpread(price, bid, ask);
   return {
-    symbol: symbol.toUpperCase(),
-    price: ch.meta.regularMarketPrice ?? last,
-    previousClose: ch.meta.previousClose ?? null,
+    symbol: sym,
+    price,
+    previousClose,
+    bid: spread.bid,
+    ask: spread.ask,
+    spreadEstimated: spread.estimated,
   };
 }
