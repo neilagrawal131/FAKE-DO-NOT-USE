@@ -5,3 +5,5 @@ public/vendor/
 .DS_Store
 .env
 data/aitrader.json
+aitrader.zip
+*.zip
