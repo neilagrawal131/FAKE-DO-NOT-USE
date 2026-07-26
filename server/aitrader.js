@@ -108,7 +108,8 @@ export async function simulate(provider) {
   const s = load();
   const enabled = s.strategies.filter((x) => x.enabled);
 
-  // Gather signals from every enabled pattern (most-recent capped).
+  // Gather signals from every enabled pattern. The trader only acts on triggers
+  // that occur AFTER the pattern was added — it never back-trades history.
   let signals = [];
   for (const strat of enabled) {
     let sig = [];
@@ -117,6 +118,8 @@ export async function simulate(provider) {
     } catch {
       sig = [];
     }
+    const activatedAt = strat.createdAt || 0;
+    sig = sig.filter((g) => g.time >= activatedAt);
     sig.sort((a, b) => a.time - b.time);
     const intraday = strat.scenario.timeframe === 'intraday';
     for (const g of sig.slice(-MAX_SIGNALS_PER_STRATEGY)) {
@@ -244,6 +247,7 @@ export async function simulate(provider) {
       name: strat.name,
       enabled: strat.enabled,
       tradeAmount: strat.tradeAmount || DEFAULT_TRADE,
+      since: strat.createdAt || null,
       interpretation: describeScenario(strat.scenario),
       stats: perStrategy[strat.id] || { trades: 0, closed: 0, open: 0, winRate: null, pnl: 0 },
     })),

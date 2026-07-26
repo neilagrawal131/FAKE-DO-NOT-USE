@@ -445,6 +445,7 @@ input { font-family: inherit; }
 .strat-main { flex: 1; min-width: 0; }
 .strat-name { font-weight: 700; font-size: 14px; }
 .strat-desc { color: var(--text-dim); font-size: 12px; margin-top: 2px; line-height: 1.4; }
+.strat-since { color: var(--text-faint); font-size: 11px; margin-top: 4px; }
 .strat-stats { display: flex; gap: 16px; align-items: center; flex-shrink: 0; }
 .strat-stat { text-align: right; }
 .strat-stat .k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-faint); }

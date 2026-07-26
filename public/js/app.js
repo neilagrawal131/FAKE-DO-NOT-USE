@@ -1099,6 +1099,7 @@ function renderTrader(data) {
           <div class="strat-main">
             <div class="strat-name">${escapeHtml(s.name)}</div>
             <div class="strat-desc">${escapeHtml(s.interpretation)}</div>
+            <div class="strat-since">Trading triggers since ${s.since ? new Date(s.since * 1000).toLocaleString() : 'activation'}${(st.trades || 0) === 0 ? ' · waiting for the next trigger' : ''}</div>
           </div>
           <div class="strat-stats">
             <div class="strat-stat"><div class="k">Trades</div><div class="v">${st.trades || 0}</div></div>
@@ -1116,7 +1117,9 @@ function renderTrader(data) {
   // trade log
   const tEl = $('#trader-trades');
   if (!data.trades.length) {
-    tEl.innerHTML = '<div class="trader-empty">No trades yet — add a pattern above.</div>';
+    tEl.innerHTML = data.strategies.length
+      ? '<div class="trader-empty">No trades yet — the AI Trader only trades a pattern from the moment you add it, so it’s waiting for the next time one of your patterns triggers.</div>'
+      : '<div class="trader-empty">No trades yet — add a pattern above.</div>';
   } else {
     const rows = data.trades
       .map(
