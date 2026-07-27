@@ -513,30 +513,16 @@ async function submitOrder() {
 // ---------------------------------------------------------------------------
 async function refreshPortfolio() {
   try {
-    const [p, ai] = await Promise.all([api('/api/portfolio'), api('/api/aitrader').catch(() => null)]);
-    if (ai) window.__aiTrades = ai.trades;
-    applyPortfolio(p, ai ? ai.trades : undefined);
+    // /api/portfolio also runs the AI Trader on the shared account, so its
+    // buys/sells arrive as real orders in this response.
+    applyPortfolio(await api('/api/portfolio'));
   } catch (err) {
     console.error(err);
   }
 }
 
-// Flatten AI-Trader round-trips into order-blotter rows (a buy on entry, a sell
-// on exit) so the bot's activity shows up in the Trade tab's order history.
-function aiTradesToOrders(trades) {
-  const rows = [];
-  for (const t of trades || []) {
-    rows.push({ ts: t.entryTime, side: 'buy', symbol: t.symbol, shares: t.shares, price: t.entryPrice, source: 'ai', strategyName: t.strategyName });
-    if (t.status === 'closed' && t.exitTime != null) {
-      rows.push({ ts: t.exitTime, side: 'sell', symbol: t.symbol, shares: t.shares, price: t.exitPrice, source: 'ai', strategyName: t.strategyName });
-    }
-  }
-  return rows;
-}
-
-function applyPortfolio(p, aiTrades) {
+function applyPortfolio(p) {
   window.__portfolio = p;
-  const ai = aiTrades ?? window.__aiTrades ?? [];
   $('#account-equity').textContent = usd(p.equity);
 
   // summary tiles
@@ -586,16 +572,12 @@ function applyPortfolio(p, aiTrades) {
       .join('');
   }
 
-  // orders — your manual orders merged with the AI Trader's executions (badged).
+  // orders — includes both your manual orders and the AI Trader's (badged "AI").
   const orderEl = $('#orders');
-  const combined = [
-    ...p.orders.map((o) => ({ ...o, source: 'you' })),
-    ...aiTradesToOrders(ai),
-  ].sort((a, b) => (b.ts || 0) - (a.ts || 0));
-  if (!combined.length) {
+  if (!p.orders.length) {
     orderEl.innerHTML = '<div class="empty">No orders yet.</div>';
   } else {
-    orderEl.innerHTML = combined
+    orderEl.innerHTML = p.orders
       .slice(0, 40)
       .map(
         (o) => `
@@ -1066,7 +1048,8 @@ async function addPatternToTrader() {
       body: JSON.stringify({ scenario: analysis.res.scenario }),
     });
     renderTrader(stateData);
-    toast('Pattern added to the AI Trader — switch to the AI Trader tab to watch it trade.', 'success');
+    refreshPortfolio(); // shared account may have changed
+    toast('Pattern added to the AI Trader — it trades on your paper account from now on.', 'success');
     if (btn) btn.textContent = '✓ Added to AI Trader';
   } catch (err) {
     toast(err.message, 'error');
@@ -1088,16 +1071,17 @@ async function refreshTrader() {
 }
 
 function renderTrader(data) {
-  const a = data.account;
+  const a = data.account; // shared paper account
+  const ai = data.ai || { totalTrades: 0, openTrades: 0, closedTrades: 0, realizedPnL: 0 };
   $('#trader-account').innerHTML = `
-    <div class="tile"><div class="tile-label">Account value</div><div class="tile-value">${usd(a.equity)}</div>
+    <div class="tile"><div class="tile-label">Account value <span class="ev-hint">(shared with Trade)</span></div><div class="tile-value">${usd(a.equity)}</div>
       <div class="tile-sub ${signClass(a.totalPnL)}">${pct(a.totalReturnPct)} all-time</div></div>
-    <div class="tile"><div class="tile-label">Total P/L</div><div class="tile-value ${signClass(a.totalPnL)}" style="font-size:16px">${usd(a.totalPnL)}</div>
-      <div class="tile-sub">realized ${usd(a.realizedPnL)}</div></div>
     <div class="tile"><div class="tile-label">Cash</div><div class="tile-value" style="font-size:16px">${usd(a.cash)}</div>
-      <div class="tile-sub">invested ${usd(a.openValue)}</div></div>
-    <div class="tile"><div class="tile-label">Trades</div><div class="tile-value" style="font-size:16px">${a.totalTrades}</div>
-      <div class="tile-sub">${a.openPositions} open · ${a.closedTrades} closed</div></div>`;
+      <div class="tile-sub">invested ${usd(a.positionsValue)}</div></div>
+    <div class="tile"><div class="tile-label">AI realized P/L</div><div class="tile-value ${signClass(ai.realizedPnL)}" style="font-size:16px">${usd(ai.realizedPnL)}</div>
+      <div class="tile-sub">from closed bot trades</div></div>
+    <div class="tile"><div class="tile-label">AI trades</div><div class="tile-value" style="font-size:16px">${ai.totalTrades}</div>
+      <div class="tile-sub">${ai.openTrades} open · ${ai.closedTrades} closed</div></div>`;
 
   // strategies
   const sEl = $('#trader-strategies');

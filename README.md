@@ -21,13 +21,14 @@ rail:
   Example: *"Analyze NVDA over the past 2 years — when it crosses above its
   50-day EMA, what happens over the next 20 days?"* → % up / avg gain, % down /
   avg drop across several forward horizons.
-- **🦾 AI Trader** — an algorithmic paper trader that trades **only** the patterns
-  you give it. Find a scenario you like in the AI Analyst and hit **“Add this
-  pattern to the AI Trader”**; it then trades that pattern on its own $100,000
-  paper account (buy on each trigger, exit after the pattern's forward horizon).
-  Every active pattern, its win rate and P/L, and every individual trade are
-  shown on the tab. Toggle patterns on/off or remove them and the account
-  recomputes live.
+- **🦾 AI Trader** — an algorithmic trader that runs on the **same paper account
+  as the Trade tab** and trades **only** the patterns you give it. Find a scenario
+  you like in the AI Analyst and hit **“Add this pattern to the AI Trader”**; from
+  that moment on it buys when the pattern triggers and sells after the pattern's
+  forward horizon. Its orders spend the shared cash, open real positions, and
+  appear in the Trade tab's order history (badged **AI**). The AI Trader tab lists
+  every active pattern with its win rate and P/L, and the full trade log. Toggle a
+  pattern off or remove it and its open positions are liquidated.
 
 No real money, no brokerage account, no API keys.
 

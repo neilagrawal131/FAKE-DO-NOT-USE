@@ -84,6 +84,9 @@ async function priceMap(symbols) {
 app.get(
   '/api/portfolio',
   wrap(async (req, res) => {
+    // Let the AI Trader act (buy new triggers / close matured positions) on the
+    // shared account before we snapshot it, so the blotter and positions are current.
+    await aitrader.evaluate(yahoo);
     const symbols = portfolio.heldSymbols();
     const marks = symbols.length ? await priceMap(symbols) : {};
     res.json(portfolio.summarize(marks));
@@ -201,11 +204,18 @@ app.get(
   })
 );
 
-// --- AI Trader (algorithmic paper trader) --------------------------------------
+// --- AI Trader (algorithmic paper trader, on the shared account) ---------------
+// Run the engine, then return the shared account snapshot + AI-specific view.
+async function aitraderState() {
+  await aitrader.evaluate(yahoo);
+  const marks = await priceMap(portfolio.heldSymbols());
+  return { account: portfolio.summarize(marks), ...(await aitrader.view(yahoo)) };
+}
+
 app.get(
   '/api/aitrader',
   wrap(async (req, res) => {
-    res.json(await aitrader.simulate(yahoo));
+    res.json(await aitraderState());
   })
 );
 
@@ -217,7 +227,7 @@ app.post(
       return res.status(400).json({ error: 'A pattern needs at least one trigger condition.' });
     }
     aitrader.addStrategy(normalizeScenario(scenario), name);
-    res.json(await aitrader.simulate(yahoo));
+    res.json(await aitraderState());
   })
 );
 
@@ -225,23 +235,23 @@ app.post(
   '/api/aitrader/strategies/:id/toggle',
   wrap(async (req, res) => {
     aitrader.setEnabled(req.params.id, Boolean(req.body && req.body.enabled));
-    res.json(await aitrader.simulate(yahoo));
+    res.json(await aitraderState());
   })
 );
 
 app.delete(
   '/api/aitrader/strategies/:id',
   wrap(async (req, res) => {
-    aitrader.removeStrategy(req.params.id);
-    res.json(await aitrader.simulate(yahoo));
+    await aitrader.removeStrategy(req.params.id, yahoo);
+    res.json(await aitraderState());
   })
 );
 
 app.post(
   '/api/aitrader/reset',
   wrap(async (req, res) => {
-    aitrader.reset();
-    res.json(await aitrader.simulate(yahoo));
+    await aitrader.reset(yahoo);
+    res.json(await aitraderState());
   })
 );
 

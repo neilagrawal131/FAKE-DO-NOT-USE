@@ -1,9 +1,13 @@
-// Algorithmic paper trader. It holds a list of user-approved "patterns"
-// (scenarios promoted from the AI Analyst) and trades ONLY those, on its own
-// $100,000 paper account — kept separate from the manual Trade account so its
-// performance is measured cleanly. The trade log is a deterministic function of
-// the enabled patterns + current market data, so we recompute it on read; only
-// the patterns themselves are persisted.
+// Algorithmic trader that runs on the SAME paper account as the manual Trade
+// tab. It holds a list of user-approved "patterns" (scenarios promoted from the
+// AI Analyst) and, going forward from when each pattern was added, places real
+// orders on the shared portfolio: a buy when a pattern triggers, and a sell when
+// the pattern's forward horizon elapses. Because it executes on the shared
+// account, its trades show up in the Trade tab's positions, cash, P&L and order
+// history automatically (tagged source: 'ai').
+//
+// It keeps its own ledger only for dedup (execute each signal once) and for the
+// AI Trader tab's pattern-level stats.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -11,15 +15,14 @@ import { fileURLToPath } from 'node:url';
 import { collectSignals } from './backtest.js';
 import { describeScenario } from './scenario.js';
 import { sectorLabel } from './universe.js';
+import * as portfolio from './portfolio.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA_DIR = join(root, 'data');
 const FILE = join(DATA_DIR, 'aitrader.json');
 
-const START_CASH = 100_000;
 const DEFAULT_TRADE = 5_000; // dollars committed per signal
 const MAX_SIGNALS_PER_STRATEGY = 60;
-const MAX_TRADES = 400;
 
 let state = null;
 let seq = 0;
@@ -27,11 +30,14 @@ let seq = 0;
 function load() {
   if (state) return state;
   try {
-    state = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : { strategies: [] };
+    state = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : {};
   } catch {
-    state = { strategies: [] };
+    state = {};
   }
   if (!Array.isArray(state.strategies)) state.strategies = [];
+  if (!state.entries) state.entries = {}; // signalId -> shares (executed buys)
+  if (!state.exits) state.exits = {}; // signalId -> true (executed sells)
+  if (!state.trades) state.trades = {}; // signalId -> trade record (AI ledger)
   return state;
 }
 function persist() {
@@ -50,8 +56,6 @@ function compact(n) {
   if (a >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
   return `${n}`;
 }
-
-// Short human label for a pattern card.
 function shortName(sc) {
   const scope = sc.symbol || sectorLabel(sc.sectorKey);
   const unit = sc.timeframe === 'intraday' ? 'bar' : 'day';
@@ -67,10 +71,12 @@ function shortName(sc) {
   const more = sc.conditions.length > 1 ? ` +${sc.conditions.length - 1}` : '';
   return `${scope} · ${trig}${more}`;
 }
-
 function fmtTime(t, intraday) {
   const d = new Date(t * 1000);
   return intraday ? d.toISOString().slice(0, 16).replace('T', ' ') : d.toISOString().slice(0, 10);
+}
+function sigId(strategyId, symbol, time) {
+  return `${strategyId}|${symbol}|${time}`;
 }
 
 // ---- strategy CRUD ----
@@ -87,31 +93,74 @@ export function addStrategy(scenario, name) {
   });
   persist();
 }
-export function removeStrategy(id) {
-  const s = load();
-  s.strategies = s.strategies.filter((x) => x.id !== id);
-  persist();
-}
 export function setEnabled(id, enabled) {
   const s = load();
   const st = s.strategies.find((x) => x.id === id);
   if (st) st.enabled = enabled;
   persist();
 }
-export function reset() {
-  state = { strategies: [] };
+// Removing a pattern liquidates its open positions on the shared account.
+export async function removeStrategy(id, provider) {
+  const s = load();
+  await liquidateStrategy(id, provider);
+  s.strategies = s.strategies.filter((x) => x.id !== id);
+  for (const [sid, t] of Object.entries(s.trades)) {
+    if (t.strategyId === id) delete s.trades[sid];
+  }
+  persist();
+}
+export async function reset(provider) {
+  const s = load();
+  for (const st of s.strategies) await liquidateStrategy(st.id, provider);
+  state = { strategies: [], entries: {}, exits: {}, trades: {} };
   persist();
 }
 
-// ---- simulation ----
-export async function simulate(provider) {
+async function liquidateStrategy(id, provider) {
   const s = load();
-  const enabled = s.strategies.filter((x) => x.enabled);
+  for (const t of Object.values(s.trades)) {
+    if (t.strategyId !== id || t.status !== 'open') continue;
+    let price = t.entryPrice;
+    try {
+      price = (await provider.lastPrice(t.symbol)).price || price;
+    } catch {
+      /* use entry as fallback */
+    }
+    sellOut(t, price, Math.floor(Date.now() / 1000));
+  }
+}
 
-  // Gather signals from every enabled pattern. The trader only acts on triggers
-  // that occur AFTER the pattern was added — it never back-trades history.
-  let signals = [];
-  for (const strat of enabled) {
+function sellOut(trade, price, ts) {
+  const s = load();
+  try {
+    portfolio.trade({ side: 'sell', symbol: trade.symbol, shares: trade.shares, price, ts, source: 'ai', strategyId: trade.strategyId, strategyName: trade.strategyName });
+  } catch {
+    /* shares may already be gone; still close the AI record */
+  }
+  s.exits[trade.id] = true;
+  trade.status = 'closed';
+  trade.exitTime = ts;
+  trade.exitDate = fmtTime(ts, trade.intraday);
+  trade.exitPrice = price;
+  trade.pnl = (price - trade.entryPrice) * trade.shares;
+  trade.pnlPct = ((price - trade.entryPrice) / trade.entryPrice) * 100;
+}
+
+// ---- the engine: execute pending entries/exits on the shared account ----
+export async function evaluate(provider) {
+  const s = load();
+  const hasEnabled = s.strategies.some((x) => x.enabled);
+  const hasOpen = Object.values(s.trades).some((t) => t.status === 'open');
+  if (!hasEnabled && !hasOpen) return;
+
+  const openStratIds = new Set(Object.values(s.trades).filter((t) => t.status === 'open').map((t) => t.strategyId));
+  const scan = s.strategies.filter((x) => x.enabled || openStratIds.has(x.id));
+
+  // Collect forward-only signals per scanned strategy, and index them by id so
+  // exits can be looked up as new horizon bars appear.
+  const sigByStrat = {};
+  const sigIndex = {};
+  for (const strat of scan) {
     let sig = [];
     try {
       sig = await collectSignals(strat.scenario, provider);
@@ -119,77 +168,70 @@ export async function simulate(provider) {
       sig = [];
     }
     const activatedAt = strat.createdAt || 0;
-    sig = sig.filter((g) => g.time >= activatedAt);
-    sig.sort((a, b) => a.time - b.time);
-    const intraday = strat.scenario.timeframe === 'intraday';
-    for (const g of sig.slice(-MAX_SIGNALS_PER_STRATEGY)) {
-      signals.push({ ...g, strategyId: strat.id, strategyName: strat.name, tradeAmount: strat.tradeAmount || DEFAULT_TRADE, intraday });
-    }
+    const filtered = sig.filter((g) => g.time >= activatedAt);
+    sigByStrat[strat.id] = filtered;
+    for (const g of filtered) sigIndex[sigId(strat.id, g.symbol, g.time)] = g;
   }
-  signals.sort((a, b) => a.time - b.time);
 
-  // Walk the merged signal stream on one shared account.
-  let cash = START_CASH;
-  const openPos = new Map(); // key strategyId|symbol -> position
-  const trades = [];
+  const openTrades = () => Object.values(s.trades).filter((t) => t.status === 'open');
 
-  const closePosition = (pos, exitTime, exitPrice) => {
-    cash += pos.shares * exitPrice;
-    pos.trade.status = 'closed';
-    pos.trade.exitTime = exitTime;
-    pos.trade.exitDate = fmtTime(exitTime, pos.intraday);
-    pos.trade.exitPrice = exitPrice;
-    pos.trade.pnl = (exitPrice - pos.trade.entryPrice) * pos.shares;
-    pos.trade.pnlPct = ((exitPrice - pos.trade.entryPrice) / pos.trade.entryPrice) * 100;
+  // Close any open position whose forward-horizon bar exists and is at/before
+  // `uptoTime` (used inline so cash frees up chronologically within one pass).
+  const closeMatured = (uptoTime) => {
+    for (const t of openTrades()) {
+      const g = sigIndex[t.id];
+      const exitTime = g ? g.exitTime : t.exitDueTime;
+      const exitPrice = g ? g.exitPrice : t.exitDuePrice;
+      if (exitPrice != null && exitTime != null && exitTime <= uptoTime) sellOut(t, exitPrice, exitTime);
+    }
   };
 
-  for (const sig of signals) {
-    // Free cash from any positions that have matured by this point in time.
-    for (const [k, pos] of openPos) {
-      if (pos.exitTime != null && pos.exitTime <= sig.time) {
-        closePosition(pos, pos.exitTime, pos.exitPrice);
-        openPos.delete(k);
-      }
+  // Single chronological pass: entry candidates (enabled patterns), oldest-first,
+  // closing matured positions before each so buying power recycles like real life.
+  const candidates = [];
+  for (const strat of s.strategies.filter((x) => x.enabled)) {
+    const intraday = strat.scenario.timeframe === 'intraday';
+    for (const g of (sigByStrat[strat.id] || []).slice(-MAX_SIGNALS_PER_STRATEGY)) {
+      const id = sigId(strat.id, g.symbol, g.time);
+      if (s.entries[id]) continue;
+      candidates.push({ id, strat, g, intraday });
     }
-    if (trades.length >= MAX_TRADES) continue;
-    const key = `${sig.strategyId}|${sig.symbol}`;
-    if (openPos.has(key)) continue; // no pyramiding the same name in one pattern
-    const price = sig.entryPrice;
+  }
+  candidates.sort((a, b) => a.g.time - b.g.time);
+
+  for (const { id, strat, g, intraday } of candidates) {
+    closeMatured(g.time);
+    const price = g.entryPrice;
     if (!(price > 0)) continue;
-    const shares = Math.max(1, Math.floor(sig.tradeAmount / price));
-    const cost = shares * price;
-    if (cost > cash) continue; // out of buying power
-
-    cash -= cost;
-    const trade = {
-      id: `t${sig.strategyId}-${sig.symbol}-${sig.time}`,
-      strategyId: sig.strategyId,
-      strategyName: sig.strategyName,
-      symbol: sig.symbol,
-      shares,
-      entryTime: sig.time,
-      entryDate: fmtTime(sig.time, sig.intraday),
-      entryPrice: price,
-      exitTime: null,
-      exitDate: null,
-      exitPrice: null,
-      status: 'open',
-      pnl: null,
-      pnlPct: null,
+    if (openTrades().some((t) => t.strategyId === strat.id && t.symbol === g.symbol)) continue;
+    const shares = Math.max(1, Math.floor((strat.tradeAmount || DEFAULT_TRADE) / price));
+    try {
+      portfolio.trade({ side: 'buy', symbol: g.symbol, shares, price, ts: g.time, source: 'ai', strategyId: strat.id, strategyName: strat.name });
+    } catch {
+      continue; // insufficient cash — leave unmarked so it can retry later
+    }
+    s.entries[id] = shares;
+    s.trades[id] = {
+      id, strategyId: strat.id, strategyName: strat.name, symbol: g.symbol, shares,
+      entryTime: g.time, entryDate: fmtTime(g.time, intraday), entryPrice: price,
+      exitDueTime: g.exitTime, exitDuePrice: g.exitPrice,
+      exitTime: null, exitDate: null, exitPrice: null, status: 'open', pnl: null, pnlPct: null, intraday,
     };
-    trades.push(trade);
-    openPos.set(key, { shares, exitTime: sig.exitTime, exitPrice: sig.exitPrice, intraday: sig.intraday, trade });
   }
 
-  // Close everything whose exit already happened; keep genuinely-open positions.
-  const stillOpen = [];
-  for (const [, pos] of openPos) {
-    if (pos.exitTime != null) closePosition(pos, pos.exitTime, pos.exitPrice);
-    else stillOpen.push(pos);
-  }
+  // Final sweep: close anything whose horizon bar now exists (up to now).
+  closeMatured(Math.floor(Date.now() / 1000));
 
-  // Mark open positions to the current price.
-  const openSymbols = [...new Set(stillOpen.map((p) => p.trade.symbol))];
+  persist();
+}
+
+// ---- read model for the AI Trader tab ----
+export async function view(provider) {
+  const s = load();
+  const trades = Object.values(s.trades);
+
+  // Mark open AI trades to current price.
+  const openSymbols = [...new Set(trades.filter((t) => t.status === 'open').map((t) => t.symbol))];
   const priceMap = {};
   await Promise.all(
     openSymbols.map(async (sym) => {
@@ -200,18 +242,14 @@ export async function simulate(provider) {
       }
     })
   );
-  let openValue = 0;
-  for (const pos of stillOpen) {
-    const cur = priceMap[pos.trade.symbol] ?? pos.trade.entryPrice;
-    pos.trade.currentPrice = cur;
-    pos.trade.pnl = (cur - pos.trade.entryPrice) * pos.shares;
-    pos.trade.pnlPct = ((cur - pos.trade.entryPrice) / pos.trade.entryPrice) * 100;
-    openValue += cur * pos.shares;
+  for (const t of trades) {
+    if (t.status === 'open') {
+      const cur = priceMap[t.symbol] ?? t.entryPrice;
+      t.currentPrice = cur;
+      t.pnl = (cur - t.entryPrice) * t.shares;
+      t.pnlPct = ((cur - t.entryPrice) / t.entryPrice) * 100;
+    }
   }
-
-  const closed = trades.filter((t) => t.status === 'closed');
-  const realized = closed.reduce((a, t) => a + t.pnl, 0);
-  const equity = cash + openValue;
 
   const perStrategy = {};
   for (const strat of s.strategies) {
@@ -227,20 +265,19 @@ export async function simulate(provider) {
     };
   }
 
-  trades.sort((a, b) => b.entryTime - a.entryTime);
+  const closed = trades.filter((t) => t.status === 'closed');
+  const aiRealized = closed.reduce((a, t) => a + (t.pnl || 0), 0);
+  const openPnl = trades.filter((t) => t.status === 'open').reduce((a, t) => a + (t.pnl || 0), 0);
+
+  const sorted = trades.sort((a, b) => (b.entryTime || 0) - (a.entryTime || 0));
 
   return {
-    account: {
-      startingCash: START_CASH,
-      cash,
-      openValue,
-      equity,
-      realizedPnL: realized,
-      totalPnL: equity - START_CASH,
-      totalReturnPct: ((equity - START_CASH) / START_CASH) * 100,
-      openPositions: stillOpen.length,
+    ai: {
       totalTrades: trades.length,
+      openTrades: trades.filter((t) => t.status === 'open').length,
       closedTrades: closed.length,
+      realizedPnL: aiRealized,
+      openPnL: openPnl,
     },
     strategies: s.strategies.map((strat) => ({
       id: strat.id,
@@ -251,6 +288,6 @@ export async function simulate(provider) {
       interpretation: describeScenario(strat.scenario),
       stats: perStrategy[strat.id] || { trades: 0, closed: 0, open: 0, winRate: null, pnl: 0 },
     })),
-    trades: trades.slice(0, 300),
+    trades: sorted.slice(0, 300),
   };
 }

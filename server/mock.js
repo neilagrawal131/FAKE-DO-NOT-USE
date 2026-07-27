@@ -87,7 +87,11 @@ function series(symbol, range, interval, nowSec) {
   const rand = mulberry32(seedFor(symbol) ^ seedFor(range) ^ seedFor(interval));
   const bars = [];
   let price = c.base * (0.75 + rand() * 0.1);
-  const start = nowSec - count * step;
+  // Anchor bar times to a fixed grid (aligned to the interval) so timestamps are
+  // stable across calls within the same interval — like real market bars. This
+  // keeps signal identity stable (a new bar only appears when the grid advances).
+  const lastAligned = Math.floor(nowSec / step) * step;
+  const start = lastAligned - (count - 1) * step;
   // Volatility grows with bar length so a monthly candle swings more than a
   // 1-minute one, capped so long bars stay sane.
   const vol = Math.min(c.base * 0.12, c.base * 0.006 * Math.sqrt(step / 3600));
