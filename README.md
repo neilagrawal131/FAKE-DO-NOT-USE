@@ -93,14 +93,20 @@ DATA_SOURCE=mock npm start
 The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):
 
 - **`polygon`** — real NYSE/NASDAQ quotes (bid/ask, market cap, day range) and deep
-  history for multi-year intraday backtests. Add your key to `.env`:
-  ```
-  POLYGON_API_KEY=your_key_here
+  history for multi-year intraday backtests. **You must create a `.env` file** (it's
+  gitignored, so it never ships with the repo):
+  ```bash
+  cp .env.example .env          # then edit .env and paste your key
+  # or in one line:
+  echo "POLYGON_API_KEY=your_key_here" > .env
+  npm start                     # startup log should read: source = polygon
   ```
   With a key present, Polygon becomes the default source; the **quote endpoint,
   trade fills and charts all use Polygon**. If a Polygon call fails (rate limit,
   plan limit, network) it **falls back to Yahoo automatically**, so the app never
-  breaks. `.env` is gitignored — your key is never committed.
+  breaks. `.env` is gitignored — your key is never committed. If the log still says
+  `source = yahoo`, your `.env` is missing or in the wrong folder (it must sit next
+  to `package.json`).
 - **`yahoo`** — free, no key, ~15-min delayed, ~60-day intraday limit.
 - **`mock`** — offline synthetic data (multi-year intraday works here for demos).
 
