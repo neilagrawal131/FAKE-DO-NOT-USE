@@ -513,15 +513,30 @@ async function submitOrder() {
 // ---------------------------------------------------------------------------
 async function refreshPortfolio() {
   try {
-    const p = await api('/api/portfolio');
-    applyPortfolio(p);
+    const [p, ai] = await Promise.all([api('/api/portfolio'), api('/api/aitrader').catch(() => null)]);
+    if (ai) window.__aiTrades = ai.trades;
+    applyPortfolio(p, ai ? ai.trades : undefined);
   } catch (err) {
     console.error(err);
   }
 }
 
-function applyPortfolio(p) {
+// Flatten AI-Trader round-trips into order-blotter rows (a buy on entry, a sell
+// on exit) so the bot's activity shows up in the Trade tab's order history.
+function aiTradesToOrders(trades) {
+  const rows = [];
+  for (const t of trades || []) {
+    rows.push({ ts: t.entryTime, side: 'buy', symbol: t.symbol, shares: t.shares, price: t.entryPrice, source: 'ai', strategyName: t.strategyName });
+    if (t.status === 'closed' && t.exitTime != null) {
+      rows.push({ ts: t.exitTime, side: 'sell', symbol: t.symbol, shares: t.shares, price: t.exitPrice, source: 'ai', strategyName: t.strategyName });
+    }
+  }
+  return rows;
+}
+
+function applyPortfolio(p, aiTrades) {
   window.__portfolio = p;
+  const ai = aiTrades ?? window.__aiTrades ?? [];
   $('#account-equity').textContent = usd(p.equity);
 
   // summary tiles
@@ -571,17 +586,21 @@ function applyPortfolio(p) {
       .join('');
   }
 
-  // orders
+  // orders — your manual orders merged with the AI Trader's executions (badged).
   const orderEl = $('#orders');
-  if (!p.orders.length) {
+  const combined = [
+    ...p.orders.map((o) => ({ ...o, source: 'you' })),
+    ...aiTradesToOrders(ai),
+  ].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  if (!combined.length) {
     orderEl.innerHTML = '<div class="empty">No orders yet.</div>';
   } else {
-    orderEl.innerHTML = p.orders
-      .slice(0, 30)
+    orderEl.innerHTML = combined
+      .slice(0, 40)
       .map(
         (o) => `
         <div class="order-row">
-          <span><span class="order-side ${o.side}">${o.side}</span> ${o.symbol}</span>
+          <span>${o.source === 'ai' ? `<span class="ai-tag" title="AI Trader — ${escapeHtml(o.strategyName || '')}">AI</span> ` : ''}<span class="order-side ${o.side}">${o.side}</span> ${o.symbol}</span>
           <span class="order-meta">${num(o.shares, 4)} @ ${usd(o.price)}</span>
         </div>`
       )

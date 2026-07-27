@@ -216,6 +216,7 @@ input { font-family: inherit; }
 .order-side { font-weight: 700; text-transform: uppercase; font-size: 10px; padding: 1px 6px; border-radius: 4px; }
 .order-side.buy { color: var(--up); background: rgba(38, 166, 154, 0.15); }
 .order-side.sell { color: var(--down); background: rgba(239, 83, 80, 0.15); }
+.ai-tag { font-weight: 800; font-size: 9px; letter-spacing: 0.5px; padding: 1px 5px; border-radius: 4px; background: rgba(56,189,248,0.18); color: var(--accent); vertical-align: middle; }
 .order-meta { color: var(--text-faint); }
 
 .empty { color: var(--text-faint); font-size: 13px; padding: 6px 2px; }
