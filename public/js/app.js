@@ -651,7 +651,7 @@ const ANALYST_EXAMPLES = [
   'In the past 6 months in biotech, what happens when a stock rises above its 100-day moving average with volume over 100,000?',
   'Analyze NVDA over the past 2 years: when it crosses above its 50-day EMA, what happens over the next 20 days?',
   '$TSLA in the last year when a bullish fair value gap forms — over the next 5 days',
-  'NVDA when it crosses above its 20-bar EMA, what happens over the next 30 minutes?',
+  'In the first 30 minutes, if $SOFI\'s opening move is +5% or more, what happens in the next 30 minutes?',
 ];
 
 const sPct = (n) => (n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);

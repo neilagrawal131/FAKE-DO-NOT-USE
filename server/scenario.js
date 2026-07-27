@@ -38,6 +38,12 @@ export function parseScenario(text) {
   // --- conditions ---
   const conditions = [];
 
+  // Opening-range / time-of-day context: "first 30 minutes", "9:30-10:00",
+  // "at the open", "opening range", "initial move". Triggers only on the first
+  // 30-minute bar of each session and forces intraday analysis.
+  const openingCtx =
+    /\b(first\s+(?:30|thirty)\s*[-\s]?(?:min|mins|minute|minutes)|opening\s+(?:range|30|thirty|move|bar|half[-\s]?hour|minutes?|candle)|at\s+the\s+open|first\s+half[-\s]?hour|9\s*:?\s*30\s*(?:-|–|to|until|thru|through)\s*10\s*:?\s*00|initial\s+(?:move|30|drop|gain|pop))\b/.test(lower);
+
   // Moving-average cross / position.
   // Captures period, optional ema/sma, and above/below direction.
   const maRe = /(\d+)\s*[-\s]?(?:day|bar|period)?s?\s*(exponential|simple|ema|sma)?\s*(?:moving\s*average|moving\s*avg|movingaverage|\bma\b|\bema\b|\bsma\b)/g;
@@ -63,12 +69,25 @@ export function parseScenario(text) {
     if (value != null) conditions.push({ kind: 'volume', op, value });
   }
 
-  // Single-day move ("rises more than 5%", "drops 3%").
-  const upMove = lower.match(/(?:rises?|gains?|jumps?|climbs?|surges?|up)\s*(?:more\s*than|over|by|at\s*least)?\s*(\d+(?:\.\d+)?)\s*%/);
-  const downMove = lower.match(/(?:falls?|drops?|declines?|loses?|down|sinks?)\s*(?:more\s*than|over|by|at\s*least)?\s*(\d+(?:\.\d+)?)\s*%/);
-  // Only treat these as day-moves if a % is present (avoids clashing with "rises above MA").
-  if (upMove) conditions.push({ kind: 'day_change', dir: 'up', pct: parseFloat(upMove[1]) });
-  if (downMove) conditions.push({ kind: 'day_change', dir: 'down', pct: parseFloat(downMove[1]) });
+  if (openingCtx) {
+    // Opening move: the first 30-min bar's open-to-close return >= X%.
+    // Handles "initial move is +5% or more", "opens up 5%", "gaps down 4%".
+    const pm = lower.match(/([+\-])?\s*(\d+(?:\.\d+)?)\s*%/);
+    if (pm) {
+      const pct = parseFloat(pm[2]);
+      const near = lower;
+      const down = pm[1] === '-' || /\b(down|drop|drops|dropped|fall|falls|fell|decline|declines|lower|negative|red|sell[-\s]?off|loses?)\b/.test(near);
+      const up = pm[1] === '+' || /\b(up|gain|gains|rise|rises|pop|pops|green|higher|positive|surge|surges|rally|rallies)\b/.test(near);
+      const dir = down && !up ? 'down' : 'up';
+      conditions.push({ kind: 'opening_move', dir, pct });
+    }
+  } else {
+    // Single-bar move ("rises more than 5%", "drops 3%"). A % must be present.
+    const upMove = lower.match(/(?:rises?|gains?|jumps?|climbs?|surges?|up)\s*(?:more\s*than|over|by|at\s*least)?\s*(\d+(?:\.\d+)?)\s*%/);
+    const downMove = lower.match(/(?:falls?|drops?|declines?|loses?|down|sinks?)\s*(?:more\s*than|over|by|at\s*least)?\s*(\d+(?:\.\d+)?)\s*%/);
+    if (upMove) conditions.push({ kind: 'day_change', dir: 'up', pct: parseFloat(upMove[1]) });
+    if (downMove) conditions.push({ kind: 'day_change', dir: 'down', pct: parseFloat(downMove[1]) });
+  }
 
   // Fair value gap (3-candle imbalance). "bullish/bearish fair value gap", "fvg",
   // "imbalance", optionally sized ("fair value gap of at least 0.5%").
@@ -90,19 +109,23 @@ export function parseScenario(text) {
   }
 
   // --- forward horizon (how long to measure the move) ---
-  // A sub-daily horizon switches the whole analysis to 30-minute intraday bars.
+  // A sub-daily horizon OR an opening-range condition puts the analysis on
+  // 30-minute intraday bars.
   const ph = parseHorizon(lower);
+  const hasOpening = conditions.some((c) => c.kind === 'opening_move');
+  const intraday = hasOpening || (ph && ph.minutes != null);
   let timeframe = 'daily';
   let barMinutes = null;
   let primaryHorizon;
   let horizons;
-  if (ph && ph.minutes != null) {
+  if (intraday) {
     timeframe = 'intraday';
     barMinutes = 30;
-    primaryHorizon = Math.max(1, Math.round(ph.minutes / 30));
+    const mins = ph && ph.minutes != null ? ph.minutes : 30;
+    primaryHorizon = Math.max(1, Math.round(mins / 30));
     horizons = uniqSort([1, 2, 4, 13, primaryHorizon]); // 30m, 1h, 2h, 1 session
     if (lookbackDays > 30) {
-      warnings.push('Intraday (30-minute) history only goes back ~30 days — narrowing the analysis window to 30 days.');
+      warnings.push('Intraday (30-minute) history from the data source only goes back ~30 days, so the window is limited to the last 30 days (a multi-year intraday backtest isn\'t available here).');
       lookbackDays = 30;
     }
     if (conditions.some((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')) {
@@ -157,6 +180,7 @@ export function describeScenario(s) {
     else if (c.kind === 'volume') parts.push(`volume ${c.op === '>' ? 'above' : 'below'} ${c.value.toLocaleString('en-US')}${intraday ? ' per 30-min bar' : ''}`);
     else if (c.kind === 'day_change') parts.push(`the ${intraday ? 'bar' : 'stock'} ${c.dir === 'up' ? 'rises' : 'falls'} ${c.pct}%+ ${intraday ? 'in a 30-min bar' : 'in a day'}`);
     else if (c.kind === 'fvg') parts.push(`a ${c.dir} fair value gap forms${c.minPct != null ? ` (≥ ${c.minPct}%)` : ''}`);
+    else if (c.kind === 'opening_move') parts.push(`the opening 30-minute move is ${c.dir === 'up' ? '+' : '−'}${c.pct}% or more`);
   }
   const cond = parts.length ? parts.join(' AND ') : intraday ? 'any bar' : 'any day';
   const window = describeWindow(s.lookbackDays) + (intraday ? ' of 30-minute bars' : '');

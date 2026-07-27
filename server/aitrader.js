@@ -66,6 +66,7 @@ function shortName(sc) {
     else if (c.kind === 'ma_state') trig = `${c.dir} ${c.period}-${unit} ${c.maType.toUpperCase()}`;
     else if (c.kind === 'volume') trig = `vol ${c.op} ${compact(c.value)}`;
     else if (c.kind === 'day_change') trig = `${c.dir} ${c.pct}% move`;
+    else if (c.kind === 'opening_move') trig = `open ${c.dir === 'up' ? '+' : '-'}${c.pct}%`;
     else if (c.kind === 'fvg') trig = `${c.dir} FVG`;
   }
   const more = sc.conditions.length > 1 ? ` +${sc.conditions.length - 1}` : '';

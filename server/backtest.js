@@ -81,6 +81,15 @@ function conditionsMet(conditions, bars, maCache, i) {
       const chg = ((bars[i].close - bars[i - 1].close) / bars[i - 1].close) * 100;
       if (c.dir === 'up' && !(chg >= c.pct)) return false;
       if (c.dir === 'down' && !(chg <= -c.pct)) return false;
+    } else if (c.kind === 'opening_move') {
+      // Only the first 30-min bar of each session; its open-to-close move.
+      const isFirstOfDay = Math.floor(bars[i].time / 86400) !== Math.floor(bars[i - 1].time / 86400);
+      if (!isFirstOfDay) return false;
+      const o = bars[i].open;
+      if (!(o > 0)) return false;
+      const move = ((bars[i].close - o) / o) * 100;
+      if (c.dir === 'up' && !(move >= c.pct)) return false;
+      if (c.dir === 'down' && !(move <= -c.pct)) return false;
     } else if (c.kind === 'fvg') {
       // 3-candle imbalance: bullish = today's low above the high 2 bars back;
       // bearish = today's high below the low 2 bars back.
