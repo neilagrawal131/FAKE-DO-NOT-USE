@@ -81,10 +81,28 @@ DATA_SOURCE=mock npm start
 
 ## Configuration
 
-| Env var       | Default  | Description                                            |
-| ------------- | -------- | ------------------------------------------------------ |
-| `PORT`        | `3000`   | HTTP port.                                             |
-| `DATA_SOURCE` | `yahoo`  | `yahoo` for live data, `mock` for synthetic offline.   |
+| Env var         | Default              | Description                                                   |
+| --------------- | -------------------- | ------------------------------------------------------------ |
+| `PORT`          | `3000`               | HTTP port.                                                   |
+| `DATA_SOURCE`   | auto                 | `polygon`, `yahoo`, or `mock`. Defaults to `polygon` when a key is set, else `yahoo`. |
+| `POLYGON_API_KEY` | —                  | Polygon.io key (put it in `.env`). Enables real quotes + deep history. |
+| `POLYGON_INTRADAY_MAX_DAYS` | `730`    | How far back your Polygon plan serves 30-min intraday.       |
+
+### Market-data providers
+
+The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):
+
+- **`polygon`** — real NYSE/NASDAQ quotes (bid/ask, market cap, day range) and deep
+  history for multi-year intraday backtests. Add your key to `.env`:
+  ```
+  POLYGON_API_KEY=your_key_here
+  ```
+  With a key present, Polygon becomes the default source; the **quote endpoint,
+  trade fills and charts all use Polygon**. If a Polygon call fails (rate limit,
+  plan limit, network) it **falls back to Yahoo automatically**, so the app never
+  breaks. `.env` is gitignored — your key is never committed.
+- **`yahoo`** — free, no key, ~15-min delayed, ~60-day intraday limit.
+- **`mock`** — offline synthetic data (multi-year intraday works here for demos).
 
 ## How it works
 

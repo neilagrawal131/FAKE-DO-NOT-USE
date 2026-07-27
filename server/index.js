@@ -1,8 +1,10 @@
+import './loadenv.js'; // must be first — populates process.env from .env
 import express from 'express';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as yahooProvider from './yahoo.js';
 import * as mockProvider from './mock.js';
+import * as polygonProvider from '../market_data/polygon.js';
 import * as portfolio from './portfolio.js';
 import { aggregateBars } from './aggregate.js';
 import { parseScenario, normalizeScenario, setIntradayMaxDays } from './scenario.js';
@@ -10,10 +12,37 @@ import { runBacktest, fetchRange, intradayRange } from './backtest.js';
 import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
 
-// Choose the market-data source. Default is live Yahoo Finance; set
-// DATA_SOURCE=mock for an offline demo with synthetic prices.
-const SOURCE = (process.env.DATA_SOURCE || 'yahoo').toLowerCase();
-const yahoo = SOURCE === 'mock' ? mockProvider : yahooProvider;
+// Choose the market-data source:
+//   - polygon  (default when POLYGON_API_KEY is set) — real quotes + deep history
+//   - yahoo    (default otherwise) — free, no key, ~15-min delayed
+//   - mock     — offline synthetic demo
+const HAS_POLYGON = Boolean(process.env.POLYGON_API_KEY);
+const SOURCE = (process.env.DATA_SOURCE || (HAS_POLYGON ? 'polygon' : 'yahoo')).toLowerCase();
+
+// If a Polygon call fails (rate limit, plan limit, network), transparently fall
+// back to Yahoo for that call so the frontend never breaks.
+function withFallback(primary, backup) {
+  const wrap = (name) => async (...args) => {
+    try {
+      return await primary[name](...args);
+    } catch (err) {
+      console.warn(`[polygon] ${name} failed (${err.message}); falling back to Yahoo`);
+      return backup[name](...args);
+    }
+  };
+  return {
+    chart: wrap('chart'),
+    quote: wrap('quote'),
+    lastPrice: wrap('lastPrice'),
+    search: wrap('search'),
+    INTRADAY_MAX_DAYS: primary.INTRADAY_MAX_DAYS ?? backup.INTRADAY_MAX_DAYS,
+  };
+}
+
+let yahoo; // the active provider (name kept for minimal churn)
+if (SOURCE === 'mock') yahoo = mockProvider;
+else if (SOURCE === 'polygon') yahoo = withFallback(polygonProvider, yahooProvider);
+else yahoo = yahooProvider;
 
 // Tell the parser how far back intraday analysis can go for this data source.
 setIntradayMaxDays(yahoo.INTRADAY_MAX_DAYS ?? 30);
@@ -22,7 +51,15 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log(`[data] source = ${SOURCE === 'mock' ? 'mock (synthetic)' : 'yahoo (live NYSE/NASDAQ)'}`);
+console.log(
+  `[data] source = ${
+    SOURCE === 'mock'
+      ? 'mock (synthetic)'
+      : SOURCE === 'polygon'
+        ? 'polygon (real quotes + deep history, Yahoo fallback)'
+        : 'yahoo (free, ~15-min delayed)'
+  }`
+);
 
 app.use(express.json());
 
