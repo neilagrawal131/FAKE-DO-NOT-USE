@@ -5,8 +5,8 @@ import * as yahooProvider from './yahoo.js';
 import * as mockProvider from './mock.js';
 import * as portfolio from './portfolio.js';
 import { aggregateBars } from './aggregate.js';
-import { parseScenario, normalizeScenario } from './scenario.js';
-import { runBacktest, fetchRange } from './backtest.js';
+import { parseScenario, normalizeScenario, setIntradayMaxDays } from './scenario.js';
+import { runBacktest, fetchRange, intradayRange } from './backtest.js';
 import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
 
@@ -14,6 +14,9 @@ import * as aitrader from './aitrader.js';
 // DATA_SOURCE=mock for an offline demo with synthetic prices.
 const SOURCE = (process.env.DATA_SOURCE || 'yahoo').toLowerCase();
 const yahoo = SOURCE === 'mock' ? mockProvider : yahooProvider;
+
+// Tell the parser how far back intraday analysis can go for this data source.
+setIntradayMaxDays(yahoo.INTRADAY_MAX_DAYS ?? 30);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const app = express();
@@ -168,7 +171,7 @@ app.get(
     }
     // Fetch the SAME series the backtest used so timestamps line up.
     const data = intraday
-      ? await yahoo.chart(symbol, '1mo', '30m')
+      ? await yahoo.chart(symbol, intradayRange(lookbackDays), '30m')
       : await yahoo.chart(symbol, fetchRange(lookbackDays), '1d');
     const bars = data.bars || [];
     if (!bars.length) return res.status(404).json({ error: 'No data for symbol' });

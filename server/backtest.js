@@ -13,6 +13,18 @@ export function fetchRange(lookbackDays) {
   return 'max';
 }
 
+// Intraday fetch range keyword scaled to the requested window (bounded by what
+// the active data source actually serves — see each provider's INTRADAY_MAX_DAYS).
+export function intradayRange(lookbackDays) {
+  if (lookbackDays <= 30) return '1mo';
+  if (lookbackDays <= 90) return '3mo';
+  if (lookbackDays <= 182) return '6mo';
+  if (lookbackDays <= 365) return '1y';
+  if (lookbackDays <= 730) return '2y';
+  if (lookbackDays <= 1825) return '5y';
+  return 'max';
+}
+
 // Simple/exponential moving average aligned to `bars` (null until enough data).
 function movingAverage(bars, period, type) {
   const out = new Array(bars.length).fill(null);
@@ -115,7 +127,7 @@ export async function runBacktest(scenario, provider) {
   const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
   const intraday = scenario.timeframe === 'intraday';
   const interval = intraday ? '30m' : '1d';
-  const range = intraday ? '1mo' : fetchRange(scenario.lookbackDays);
+  const range = intraday ? intradayRange(scenario.lookbackDays) : fetchRange(scenario.lookbackDays);
   const nowSec = Math.floor(Date.now() / 1000);
   const cutoff = nowSec - scenario.lookbackDays * 86400;
   const maxHorizon = Math.max(...scenario.horizons);
@@ -199,7 +211,7 @@ export async function collectSignals(scenario, provider) {
   const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
   const intraday = scenario.timeframe === 'intraday';
   const interval = intraday ? '30m' : '1d';
-  const range = intraday ? '1mo' : fetchRange(scenario.lookbackDays);
+  const range = intraday ? intradayRange(scenario.lookbackDays) : fetchRange(scenario.lookbackDays);
   const nowSec = Math.floor(Date.now() / 1000);
   const cutoff = nowSec - scenario.lookbackDays * 86400;
   const H = scenario.primaryHorizon;

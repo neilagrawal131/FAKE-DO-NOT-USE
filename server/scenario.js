@@ -9,6 +9,13 @@ const DEFAULT_HORIZONS = [1, 5, 10, 20];
 const DEFAULT_PRIMARY = 10;
 const DEFAULT_LOOKBACK_DAYS = 180; // ~6 months
 
+// How far back intraday (30-min) analysis can reach — set from the active data
+// provider at startup (Yahoo ~60 days; the synthetic/mock source is multi-year).
+let INTRADAY_MAX_DAYS = 30;
+export function setIntradayMaxDays(n) {
+  if (Number.isFinite(n) && n > 0) INTRADAY_MAX_DAYS = Math.round(n);
+}
+
 // Parse free text -> { scenario, warnings }.
 export function parseScenario(text) {
   const q = String(text || '');
@@ -124,9 +131,10 @@ export function parseScenario(text) {
     const mins = ph && ph.minutes != null ? ph.minutes : 30;
     primaryHorizon = Math.max(1, Math.round(mins / 30));
     horizons = uniqSort([1, 2, 4, 13, primaryHorizon]); // 30m, 1h, 2h, 1 session
-    if (lookbackDays > 30) {
-      warnings.push('Intraday (30-minute) history from the data source only goes back ~30 days, so the window is limited to the last 30 days (a multi-year intraday backtest isn\'t available here).');
-      lookbackDays = 30;
+    if (lookbackDays > INTRADAY_MAX_DAYS) {
+      const yrs = INTRADAY_MAX_DAYS >= 365 ? `${Math.round(INTRADAY_MAX_DAYS / 365)} year(s)` : `~${INTRADAY_MAX_DAYS} days`;
+      warnings.push(`The active data source only serves ${yrs} of 30-minute intraday history, so the window was limited to that. (For longer intraday backtests, use the mock demo source or a keyed intraday provider — see the README.)`);
+      lookbackDays = INTRADAY_MAX_DAYS;
     }
     if (conditions.some((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')) {
       warnings.push('Intraday mode: moving-average periods are counted in 30-minute bars (not days), and volume is per 30-minute bar.');
@@ -155,7 +163,7 @@ export function normalizeScenario(s = {}) {
   const scenario = {
     symbol: s.symbol ? String(s.symbol).toUpperCase() : null,
     sectorKey: s.symbol ? null : s.sectorKey || 'market',
-    lookbackDays: clamp(Number(s.lookbackDays) || DEFAULT_LOOKBACK_DAYS, 20, timeframe === 'intraday' ? 30 : 365 * 6),
+    lookbackDays: clamp(Number(s.lookbackDays) || DEFAULT_LOOKBACK_DAYS, 20, timeframe === 'intraday' ? INTRADAY_MAX_DAYS : 365 * 6),
     timeframe,
     barMinutes: timeframe === 'intraday' ? 30 : null,
     horizons: Array.isArray(s.horizons) && s.horizons.length ? s.horizons.map(Number).filter((n) => n > 0) : [...DEFAULT_HORIZONS],

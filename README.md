@@ -145,6 +145,25 @@ DATA_SOURCE=mock PORT=3111 npm start &     # in one shell
 node scripts/smoke.mjs shot.png            # end-to-end browser check
 ```
 
+## Intraday data & multi-year intraday backtests
+
+Sub-daily analysis (a forward horizon under a day, or an opening-range trigger like
+"first 30 minutes") runs on **30-minute bars**. How far back that can reach depends
+on the data source, declared by each provider's `INTRADAY_MAX_DAYS`:
+
+- **`yahoo` (default, live):** Yahoo's free feed serves only ~**60 days** of
+  30-minute bars, so intraday windows are limited to that (with a warning). A true
+  multi-year *intraday* backtest isn't possible from this source.
+- **`mock` (demo):** synthetic data has no history limit, so **multi-year intraday
+  backtests work out of the box** — e.g. *"over the past 2 years, in the first 30
+  minutes, if a stock's initial move is +5%…"* scans two full years of 30-minute bars.
+
+To do multi-year intraday on **real** data, plug in a provider that serves deep
+intraday history (e.g. Alpaca, Polygon, or Tiingo). Add a module with the same
+interface as `server/yahoo.js` (`chart`, `quote`, `lastPrice`, `search`, and an
+`INTRADAY_MAX_DAYS` export), then select it in `server/index.js`. The clamp and
+warnings adjust automatically to whatever `INTRADAY_MAX_DAYS` the provider reports.
+
 ## Notes & disclaimer
 
 - Market data is provided by Yahoo Finance's public endpoints and is typically

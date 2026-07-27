@@ -1,3 +1,6 @@
+// Yahoo's free feed serves ~60 days of 30-minute bars.
+export const INTRADAY_MAX_DAYS = 60;
+
 // Thin, dependency-free client for Yahoo Finance's public endpoints.
 //
 // Why Yahoo: it exposes real, delayed (~15 min) NYSE/NASDAQ market data with no
