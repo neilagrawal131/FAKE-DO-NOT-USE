@@ -150,9 +150,29 @@ export async function chart(symbol, range = '1mo', interval = '1d') {
   };
 }
 
+// The single-ticker snapshot (real-time price + NBBO) is a higher-tier feature.
+// If the plan doesn't allow it we stop calling it so we don't waste the rate limit.
+let snapshotOff = false;
 async function snapshot(sym) {
-  const data = await pget(`/v2/snapshot/locale/us/markets/stocks/tickers/${encodeURIComponent(sym)}`, 15_000);
-  return data.ticker || null;
+  if (snapshotOff) return null;
+  try {
+    const data = await pget(`/v2/snapshot/locale/us/markets/stocks/tickers/${encodeURIComponent(sym)}`, 15_000);
+    return data.ticker || null;
+  } catch (err) {
+    if (/\b(401|403)\b|NOT_AUTHORIZED|not authorized/i.test(err.message)) snapshotOff = true;
+    return null;
+  }
+}
+
+// Daily bars via aggregates (available on every plan that serves history).
+async function dailyBars(sym, calendarDays) {
+  const to = new Date();
+  const from = new Date(to.getTime() - calendarDays * 86400 * 1000);
+  const data = await pget(
+    `/v2/aggs/ticker/${encodeURIComponent(sym)}/range/1/day/${fmtDate(from)}/${fmtDate(to)}?adjusted=true&sort=asc&limit=50000`,
+    5 * 60_000
+  );
+  return (data.results || []).filter((r) => Number.isFinite(r.c));
 }
 async function details(sym) {
   try {
@@ -163,14 +183,39 @@ async function details(sym) {
   }
 }
 
-// Rich quote + fundamentals (snapshot + ticker details).
+// Rich quote. Core fields (price, OHLCV, ranges, moving averages) come from daily
+// aggregates so they work on any plan; ticker details add name/market cap/etc;
+// the snapshot adds real-time price + NBBO bid/ask when the plan includes it.
 export async function quote(symbol) {
   const sym = symbol.toUpperCase();
-  const [t, d] = await Promise.all([snapshot(sym).catch(() => null), details(sym)]);
+  const [t, d, daily] = await Promise.all([
+    snapshot(sym), // best-effort; returns null if the plan gates it
+    details(sym),
+    dailyBars(sym, 400).catch(() => []),
+  ]);
 
-  const price = t?.lastTrade?.p ?? t?.day?.c ?? t?.prevDay?.c ?? null;
-  // Polygon lastQuote: p = bid price, P = ask price, s = bid size, S = ask size.
-  const sp = normalizeSpread(price, t?.lastQuote?.p, t?.lastQuote?.P);
+  const lastBar = daily.length ? daily[daily.length - 1] : null;
+  const prevBar = daily.length > 1 ? daily[daily.length - 2] : null;
+  const closes = daily.map((b) => b.c);
+  const sma = (n) => (closes.length ? closes.slice(-n).reduce((a, b) => a + b, 0) / Math.min(n, closes.length) : null);
+
+  // Real-time price/quote if snapshot is available, else the latest daily bar.
+  const rtPrice = t?.lastTrade?.p ?? t?.day?.c ?? null;
+  const price = rtPrice ?? (lastBar ? lastBar.c : null);
+  const bid = t?.lastQuote?.p ?? null; // Polygon lastQuote: p=bid, P=ask, s=bidSize, S=askSize
+  const ask = t?.lastQuote?.P ?? null;
+  const sp = normalizeSpread(price, bid, ask);
+
+  const previousClose = t?.prevDay?.c ?? (prevBar ? prevBar.c : lastBar ? lastBar.o : null);
+  const change = price != null && previousClose != null ? price - previousClose : null;
+  const changePercent = change != null && previousClose ? (change / previousClose) * 100 : null;
+
+  const window52 = closes.slice(-252);
+  const fiftyTwoWeekHigh = window52.length ? Math.max(...window52, lastBar ? lastBar.h : -Infinity) : null;
+  const fiftyTwoWeekLow = window52.length ? Math.min(...window52, lastBar ? lastBar.l : Infinity) : null;
+  const vols = daily.map((b) => b.v).filter((v) => Number.isFinite(v));
+  const avgVolume = vols.length ? Math.round(vols.slice(-63).reduce((a, b) => a + b, 0) / Math.min(63, vols.length)) : null;
+
   const shares = d?.weighted_shares_outstanding ?? d?.share_class_shares_outstanding ?? null;
   const marketCap = d?.market_cap ?? (shares && price ? shares * price : null);
 
@@ -186,24 +231,24 @@ export async function quote(symbol) {
     askSize: t?.lastQuote?.S != null ? t.lastQuote.S * 100 : null,
     spread: sp.bid != null && sp.ask != null ? +(sp.ask - sp.bid).toFixed(4) : null,
     spreadEstimated: sp.estimated,
-    previousClose: t?.prevDay?.c ?? null,
-    change: t?.todaysChange ?? null,
-    changePercent: t?.todaysChangePerc ?? null,
-    dayHigh: t?.day?.h ?? null,
-    dayLow: t?.day?.l ?? null,
-    open: t?.day?.o ?? null,
-    volume: t?.day?.v ?? null,
-    avgVolume: null,
+    previousClose,
+    change,
+    changePercent,
+    dayHigh: t?.day?.h ?? (lastBar ? lastBar.h : null),
+    dayLow: t?.day?.l ?? (lastBar ? lastBar.l : null),
+    open: t?.day?.o ?? (lastBar ? lastBar.o : null),
+    volume: t?.day?.v ?? (lastBar ? lastBar.v : null),
+    avgVolume,
     marketCap,
-    peRatio: null,
+    peRatio: null, // needs the financials endpoint (higher tier) — left blank honestly
     forwardPE: null,
     eps: null,
     beta: null,
     dividendYield: null,
-    fiftyTwoWeekHigh: null,
-    fiftyTwoWeekLow: null,
-    fiftyDayAverage: null,
-    twoHundredDayAverage: null,
+    fiftyTwoWeekHigh,
+    fiftyTwoWeekLow,
+    fiftyDayAverage: sma(50),
+    twoHundredDayAverage: sma(200),
     sharesOutstanding: shares,
     sector: d?.sic_description || null,
     industry: d?.sic_description || null,
@@ -215,7 +260,8 @@ export async function quote(symbol) {
   };
 }
 
-// Last price + live bid/ask for portfolio marking and spread-aware fills.
+// Last price + bid/ask for portfolio marking and spread-aware fills. Real-time
+// from snapshot when the plan allows, else the latest daily close.
 export async function lastPrice(symbol) {
   const sym = symbol.toUpperCase();
   let price = null;
@@ -223,23 +269,18 @@ export async function lastPrice(symbol) {
   let bid = null;
   let ask = null;
 
-  try {
-    const t = await snapshot(sym);
-    if (t) {
-      price = t.lastTrade?.p ?? t.day?.c ?? t.min?.c ?? null;
-      prev = t.prevDay?.c ?? null;
-      bid = t.lastQuote?.p ?? null;
-      ask = t.lastQuote?.P ?? null;
-    }
-  } catch {
-    /* fall through to prev-close */
+  const t = await snapshot(sym);
+  if (t) {
+    price = t.lastTrade?.p ?? t.day?.c ?? t.min?.c ?? null;
+    prev = t.prevDay?.c ?? null;
+    bid = t.lastQuote?.p ?? null;
+    ask = t.lastQuote?.P ?? null;
   }
   if (price == null) {
-    const pc = await pget(`/v2/aggs/ticker/${encodeURIComponent(sym)}/prev?adjusted=true`, 15_000).catch(() => null);
-    const r = pc?.results?.[0];
-    if (r) {
-      price = r.c;
-      prev = prev ?? r.c;
+    const bars = await dailyBars(sym, 12).catch(() => []);
+    if (bars.length) {
+      price = bars[bars.length - 1].c;
+      prev = prev ?? (bars.length > 1 ? bars[bars.length - 2].c : price);
     }
   }
   const sp = normalizeSpread(price, bid, ask);
