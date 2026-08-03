@@ -101,8 +101,11 @@ DATA_SOURCE=mock npm start
 | `POLYGON_INTRADAY_MAX_DAYS` | `730`    | How far back your Polygon plan serves 30-min intraday.       |
 | `MARKET_CACHE_MS` | `10000`            | Global cap: each piece of market data is pulled from the provider at most once per this many ms (default 10s). Lower = fresher but more API calls. |
 | `STRATEGIST_TICK_MS` | `10000`         | How often the autonomous AI Strategist runs a discover/improve/trade cycle. |
-| `STRATEGIST_ROSTER` | `12`             | How many patterns the AI Strategist keeps trading live at once. |
-| `STRATEGIST_TRADE_USD` | `2500`        | Dollars the AI Strategist commits per position (spreads capital across the roster). |
+| `STRATEGIST_ROSTER` | `60`             | How many patterns the AI Strategist keeps trading live at once (can be set into the hundreds). |
+| `STRATEGIST_TRADE_USD` | `1200`        | Dollars the AI Strategist commits per position (small, so capital spreads across the large roster). |
+| `STRATEGIST_MIN_SAMPLE` | `60`         | Minimum historical occurrences for a pattern to qualify — enforces COMMON, frequently-triggering patterns. |
+| `STRATEGIST_MIN_SCORE` | `0.03`        | Minimum reward/risk score to qualify — a profitability floor (positive expectancy per unit of risk). |
+| `STRATEGIST_POOL` | `300`             | How many patterns the Strategist explores/keeps in its search pool. |
 
 ### Market-data providers
 

@@ -218,7 +218,11 @@ async function runEvaluate(provider) {
   if (!hasEnabled && !hasOpen) return;
 
   const openStratIds = new Set(Object.values(s.trades).filter((t) => t.status === 'open').map((t) => t.strategyId));
-  const scan = s.strategies.filter((x) => x.enabled || openStratIds.has(x.id));
+  // Historical forward-only scan is only for NON-live-entry (user-added) patterns.
+  // Live-entry (Strategist) patterns enter via the live pass and exit on their
+  // wall-clock horizon, so we skip the expensive per-strategy history scan for
+  // them — essential now that the roster can be dozens/hundreds of patterns.
+  const scan = s.strategies.filter((x) => !x.liveEntry && (x.enabled || openStratIds.has(x.id)));
 
   // ---- diversification budget ------------------------------------------------
   // Keep the AI's deployed capital within the target weight for each sector. We
@@ -292,7 +296,7 @@ async function runEvaluate(provider) {
   // Single chronological pass: entry candidates (enabled patterns), oldest-first,
   // closing matured positions before each so buying power recycles like real life.
   const candidates = [];
-  for (const strat of s.strategies.filter((x) => x.enabled)) {
+  for (const strat of s.strategies.filter((x) => x.enabled && !x.liveEntry)) {
     const intraday = strat.scenario.timeframe === 'intraday';
     for (const g of (sigByStrat[strat.id] || []).slice(-MAX_SIGNALS_PER_STRATEGY)) {
       const id = sigId(strat.id, g.symbol, g.time);

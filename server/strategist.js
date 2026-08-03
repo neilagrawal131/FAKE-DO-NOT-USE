@@ -31,40 +31,51 @@ const FILE = join(DATA_DIR, 'strategist.json');
 // --- tunables (env-overridable) ------------------------------------------------
 const TICK_MS = Number(process.env.STRATEGIST_TICK_MS) || 10000; // one generation + trade tick (matches the 10s data cache)
 const LOOKBACK_DAYS = 365; // history each scoring backtest sees
-const MIN_SAMPLE = 15; // ignore patterns with too few occurrences to trust
-const TARGET_ROSTER = Number(process.env.STRATEGIST_ROSTER) || 12; // how many patterns live at once
-const POOL_MAX = 48; // cap the gene pool so exploration stays bounded
-const LOG_MAX = 80; // decision-log entries kept
-const BATCH_SEEDS = 3; // fresh seed genes tested per generation
-const BATCH_MUTANTS = 4; // mutations of current leaders tested per generation
-const MIN_SCORE = 0; // a gene must beat this reward/risk score to qualify
-// Position size per promoted pattern — smaller than the manual default so the
-// shared account's capital spreads across the whole (larger) roster.
-const STRAT_TRADE = Number(process.env.STRATEGIST_TRADE_USD) || 2500;
+// Require a LOT of occurrences: we specifically want COMMON, frequently-triggering
+// patterns that will actually be traded, not rare one-offs.
+const MIN_SAMPLE = Number(process.env.STRATEGIST_MIN_SAMPLE) || 60;
+const TARGET_ROSTER = Number(process.env.STRATEGIST_ROSTER) || 60; // how many patterns live at once (can be hundreds)
+const POOL_MAX = Number(process.env.STRATEGIST_POOL) || 300; // explore hundreds of patterns
+const LOG_MAX = 140; // decision-log entries kept
+const BATCH_SEEDS = 5; // fresh seed genes tested per generation
+const BATCH_MUTANTS = 7; // mutations of current leaders tested per generation
+// Minimum reward/risk score to qualify — a real profitability floor (positive
+// expectancy per unit of risk), not just "> 0", so only patterns with a genuine
+// edge get promoted to live trading.
+const MIN_SCORE = Number.isFinite(Number(process.env.STRATEGIST_MIN_SCORE)) ? Number(process.env.STRATEGIST_MIN_SCORE) : 0.03;
+// Position size per promoted pattern — small so the shared account's capital
+// spreads across the whole (large) roster and many patterns actually deploy.
+const STRAT_TRADE = Number(process.env.STRATEGIST_TRADE_USD) || 1200;
 
 const UNIVERSES = TARGET_SECTORS; // rotate through every sector that has a diversification target
 
-// Scale-free seed patterns (no absolute price/volume thresholds) — the starting
-// genome the strategist mutates from. Each is a gene: conditions + horizon.
+// Seed patterns — deliberately COMMON, frequently-triggering, and (importantly)
+// defined as STATES/recent-events so the live entry the AI Trader takes matches
+// what was backtested, keeping the measured edge honest. No rare one-bar crosses.
 const SEEDS = [
-  { conditions: [{ kind: 'ma_cross', dir: 'above', maType: 'ema', period: 20 }], horizon: 5 },
-  { conditions: [{ kind: 'ma_cross', dir: 'above', maType: 'ema', period: 50 }], horizon: 10 },
-  { conditions: [{ kind: 'ma_cross', dir: 'above', maType: 'sma', period: 100 }], horizon: 10 },
-  { conditions: [{ kind: 'ma_cross', dir: 'above', maType: 'sma', period: 200 }], horizon: 20 },
-  { conditions: [{ kind: 'ma_cross', dir: 'below', maType: 'sma', period: 50 }], horizon: 10 },
+  // Trend regimes — very common; backtest = state = live entry (consistent P&L).
+  { conditions: [{ kind: 'ma_state', dir: 'above', maType: 'ema', period: 20 }], horizon: 5 },
+  { conditions: [{ kind: 'ma_state', dir: 'above', maType: 'sma', period: 50 }], horizon: 10 },
+  { conditions: [{ kind: 'ma_state', dir: 'above', maType: 'sma', period: 100 }], horizon: 10 },
   { conditions: [{ kind: 'ma_state', dir: 'above', maType: 'sma', period: 200 }], horizon: 20 },
+  { conditions: [{ kind: 'ma_state', dir: 'above', maType: 'ema', period: 50 }], horizon: 10 },
+  { conditions: [{ kind: 'ma_state', dir: 'below', maType: 'sma', period: 50 }], horizon: 10 },
+  { conditions: [{ kind: 'ma_state', dir: 'below', maType: 'sma', period: 200 }], horizon: 20 },
+  // Common momentum / dips — small daily moves happen constantly.
+  { conditions: [{ kind: 'day_change', dir: 'up', pct: 1 }], horizon: 5 },
+  { conditions: [{ kind: 'day_change', dir: 'up', pct: 2 }], horizon: 5 },
+  { conditions: [{ kind: 'day_change', dir: 'down', pct: 1 }], horizon: 5 },
+  { conditions: [{ kind: 'day_change', dir: 'down', pct: 2 }], horizon: 10 },
+  // Fair-value gaps — moderately common; live entry requires a recent one.
   { conditions: [{ kind: 'fvg', dir: 'bullish', minPct: null }], horizon: 10 },
-  { conditions: [{ kind: 'fvg', dir: 'bullish', minPct: 1 }], horizon: 10 },
-  { conditions: [{ kind: 'day_change', dir: 'up', pct: 3 }], horizon: 5 },
-  { conditions: [{ kind: 'day_change', dir: 'down', pct: 3 }], horizon: 5 },
-  { conditions: [{ kind: 'day_change', dir: 'down', pct: 5 }], horizon: 10 },
+  { conditions: [{ kind: 'fvg', dir: 'bearish', minPct: null }], horizon: 10 },
 ];
 
 // --- mutation search space -----------------------------------------------------
-const MA_PERIODS = [10, 20, 50, 100, 150, 200];
-const HORIZONS = [1, 3, 5, 10, 20];
-const MOVE_PCTS = [2, 3, 4, 5, 7];
-const FVG_MINPCTS = [null, 0.5, 1, 2];
+const MA_PERIODS = [10, 20, 30, 50, 100, 150, 200];
+const HORIZONS = [1, 2, 3, 5, 10, 20];
+const MOVE_PCTS = [0.5, 1, 1.5, 2, 3]; // small (common) moves
+const FVG_MINPCTS = [null, 0.25, 0.5, 1];
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
@@ -377,7 +388,7 @@ export function getState() {
   const leaderboard = Object.values(s.pool)
     .filter((e) => e.stats)
     .sort((a, b) => (qualifies(b) - qualifies(a)) || scoreOf(b) - scoreOf(a))
-    .slice(0, Math.max(20, TARGET_ROSTER + 6))
+    .slice(0, 40)
     .map((e) => ({
       label: e.label,
       sector: sectorLabel(e.gene.sectorKey),
