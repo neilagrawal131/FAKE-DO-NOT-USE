@@ -35,6 +35,7 @@ const LOOKBACK_DAYS = 365; // history each scoring backtest sees
 // patterns that will actually be traded, not rare one-offs.
 const MIN_SAMPLE = Number(process.env.STRATEGIST_MIN_SAMPLE) || 60;
 const TARGET_ROSTER = Number(process.env.STRATEGIST_ROSTER) || 60; // how many patterns live at once (can be hundreds)
+const RETAIN_MARGIN = Number(process.env.STRATEGIST_RETAIN_MARGIN) || 30; // hysteresis: keep a live pattern until it falls this far past the roster
 const POOL_MAX = Number(process.env.STRATEGIST_POOL) || 300; // explore hundreds of patterns
 const LOG_MAX = 140; // decision-log entries kept
 const BATCH_SEEDS = 5; // fresh seed genes tested per generation
@@ -309,31 +310,41 @@ function ownedKeySet() {
 async function reconcile() {
   const s = load();
 
-  // Desired live set = the top qualifying genes by reward/risk.
-  const desired = Object.values(s.pool)
+  const ranked = Object.values(s.pool)
     .filter(qualifies)
-    .sort((a, b) => scoreOf(b) - scoreOf(a))
-    .slice(0, TARGET_ROSTER);
-  const desiredSigs = new Map(desired.map((e) => [scenarioSig(e.scenario), e]));
+    .sort((a, b) => scoreOf(b) - scoreOf(a));
+  const desired = ranked.slice(0, TARGET_ROSTER); // best patterns to promote into
+  // Hysteresis: a promoted pattern is only rotated out once it falls out of a
+  // WIDER retention band (or stops qualifying), so the roster doesn't thrash on
+  // tiny score changes — which would churn positions.
+  const keepSigs = new Set(ranked.slice(0, TARGET_ROSTER + RETAIN_MARGIN).map((e) => scenarioSig(e.scenario)));
+  const desiredBySig = new Set(desired.map((e) => scenarioSig(e.scenario)));
 
-  const owned = ownedStrategies();
-  const ownedSigs = new Map(owned.map((st) => [scenarioSig(st.scenario), st]));
+  let owned = ownedStrategies();
+  const ownedSigs = new Set(owned.map((st) => scenarioSig(st.scenario)));
 
-  // DEMOTE / REMOVE: any owned pattern no longer in the desired set.
+  // DEMOTE: owned patterns that dropped out of the retention band. Their open
+  // positions RIDE to their scheduled horizon exit (not liquidated) — replacing a
+  // pattern must never dump fresh positions at ~the entry price.
   for (const st of owned) {
-    const sig = scenarioSig(st.scenario);
-    if (!desiredSigs.has(sig)) {
-      await aitrader.removeStrategy(st.id, provider);
-      logEvent('demote', st.name.replace(/^Auto: /, ''), 'fell out of the top reward/risk set — removed & positions liquidated');
+    if (!keepSigs.has(scenarioSig(st.scenario))) {
+      await aitrader.removeStrategy(st.id, provider, { keepPositions: true });
+      logEvent('demote', st.name.replace(/^Auto: /, ''), 'rotated out of the top set — open positions ride to their horizon');
     }
   }
 
-  // PROMOTE / ADD: any desired pattern not already live.
+  // PROMOTE: best patterns not yet live, up to the target roster size.
+  owned = ownedStrategies();
+  const liveSigs = new Set(owned.map((st) => scenarioSig(st.scenario)));
+  let count = owned.length;
   for (const e of desired) {
-    const sig = scenarioSig(e.scenario);
-    if (ownedSigs.has(sig)) continue;
+    if (count >= TARGET_ROSTER) break;
+    if (liveSigs.has(scenarioSig(e.scenario))) continue;
     const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true, STRAT_TRADE);
-    if (added) logEvent('promote', e.label, `promoted to live trading — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
+    if (added) {
+      count++;
+      logEvent('promote', e.label, `promoted to live trading — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
+    }
   }
 }
 

@@ -136,7 +136,10 @@ export function setEnabled(id, enabled) {
 // entry markers for this strategy are cleared. The ledger is pruned separately.
 export async function removeStrategy(id, provider, opts = {}) {
   const s = load();
-  await liquidateStrategy(id, provider);
+  // keepPositions: rotate the pattern out but let its open positions ride to
+  // their scheduled horizon exit (used when the Strategist replaces a pattern —
+  // dumping fresh positions at ~the entry price is pointless churn).
+  if (!opts.keepPositions) await liquidateStrategy(id, provider);
   s.strategies = s.strategies.filter((x) => x.id !== id);
   if (opts.purge) {
     // Hard removal (manual "remove"): drop this pattern's trades entirely.
@@ -346,12 +349,26 @@ async function runEvaluate(provider) {
     for (const t of triggers) {
       const id = sigId(strat.id, t.symbol, `live-${t.barTime}`);
       if (s.entries[id]) continue; // already acted on this exact trigger bar
-      if (openTrades().some((o) => o.strategyId === strat.id && o.symbol === t.symbol)) continue;
-      const price = t.entryPrice;
+      // At most one open AI position per symbol (prevents stacking the same name
+      // across patterns or across promote/demote cycles).
+      if (openTrades().some((o) => o.symbol === t.symbol)) continue;
+      // Enter at the TRUE current price (same source we mark positions with) so
+      // there's no phantom P&L at entry, and fall back to the bar close.
+      let price = t.entryPrice;
+      try {
+        const lp = (await provider.lastPrice(t.symbol)).price;
+        if (lp > 0) price = lp;
+      } catch {
+        /* keep bar close */
+      }
       if (!(price > 0)) continue;
       const shares = fitShares(t.symbol, price, strat.tradeAmount || DEFAULT_TRADE);
       if (shares < 1) continue; // sector already at its target weight — stay diversified
       const now = Math.floor(Date.now() / 1000);
+      // Schedule the exit relative to ENTRY time so the position is actually held
+      // for the horizon (a stale last-bar timestamp must never cause an instant
+      // same-price round-trip).
+      const holdSeconds = Math.max(t.holdSeconds || 0, 86400);
       try {
         portfolio.trade({ side: 'buy', symbol: t.symbol, shares, price, ts: now, source: 'ai', strategyId: strat.id, strategyName: strat.name });
       } catch {
@@ -362,7 +379,7 @@ async function runEvaluate(provider) {
       s.trades[id] = {
         id, strategyId: strat.id, strategyName: strat.name, symbol: t.symbol, shares,
         entryTime: now, entryDate: fmtTime(now, intraday), entryPrice: price,
-        exitDueTime: t.exitDueTime, exitDuePrice: null, live: true,
+        exitDueTime: now + holdSeconds, exitDuePrice: null, live: true,
         exitTime: null, exitDate: null, exitPrice: null, status: 'open', pnl: null, pnlPct: null, intraday,
       };
     }

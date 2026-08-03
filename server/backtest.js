@@ -269,9 +269,11 @@ export async function liveTriggers(scenario, provider) {
     return {
       symbol: sym,
       barTime: bars[last].time, // dedup key: re-enter only when a new bar forms
-      entryPrice: bars[last].close, // enter at the current price
-      // Hold horizon bars forward from the latest bar; closed at market later.
-      exitDueTime: bars[last].time + H * barSeconds,
+      entryPrice: bars[last].close, // reference current price
+      // How long to hold, in seconds. The caller schedules the exit as
+      // entryTime + holdSeconds so the position is genuinely held for the horizon
+      // (never off a stale last-bar timestamp that could already be in the past).
+      holdSeconds: H * barSeconds,
     };
   });
   return per.filter(Boolean);

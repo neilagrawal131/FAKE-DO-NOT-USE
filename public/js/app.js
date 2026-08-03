@@ -1375,8 +1375,10 @@ function boot() {
   initTrader();
   showConfig();
   refreshPortfolio();
-  // Periodically re-mark the portfolio to live prices.
-  setInterval(refreshPortfolio, 30_000);
+  // Re-mark the portfolio to live prices frequently so each position's unrealized
+  // P&L updates in ~real time (prices themselves refresh on the server's data
+  // cache interval, ~10s, so this polls a little faster than that).
+  setInterval(refreshPortfolio, 4_000);
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
