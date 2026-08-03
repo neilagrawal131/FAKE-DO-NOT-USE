@@ -205,6 +205,49 @@ export async function runBacktest(scenario, provider) {
   };
 }
 
+// "Is this pattern actionable right now?" — for each symbol, finds the most
+// recent trigger within its holding window (the last `primaryHorizon` bars, so a
+// trade opened at that trigger would still be open) and, if found, returns a live
+// entry at the CURRENT price with a forward exit scheduled `primaryHorizon` bars
+// ahead. Used by the autonomous Strategist to open real positions as soon as a
+// promoted pattern is active — without replaying old, already-closed history.
+export async function liveTriggers(scenario, provider) {
+  const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
+  const intraday = scenario.timeframe === 'intraday';
+  const interval = intraday ? '30m' : '1d';
+  const range = intraday ? intradayRange(scenario.lookbackDays) : fetchRange(scenario.lookbackDays);
+  const barSeconds = intraday ? 1800 : 86400;
+  const H = scenario.primaryHorizon;
+  const FRESH = Math.min(Math.max(H, 1), 20); // how recent a trigger still counts as "live"
+
+  const maDefs = scenario.conditions
+    .filter((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')
+    .map((c) => ({ key: maKey(c), period: c.period, type: c.maType }));
+
+  const per = await mapLimit(symbols, 6, async (sym) => {
+    const data = await provider.chart(sym, range, interval);
+    const bars = data.bars || [];
+    if (bars.length < 30) return null;
+    const maCache = new Map();
+    for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
+    const last = bars.length - 1;
+    // Most recent bar (within the fresh window) where the pattern fired.
+    let trigIdx = -1;
+    for (let i = last; i >= 1 && last - i <= FRESH; i--) {
+      if (conditionsMet(scenario.conditions, bars, maCache, i)) { trigIdx = i; break; }
+    }
+    if (trigIdx === -1) return null;
+    return {
+      symbol: sym,
+      barTime: bars[trigIdx].time, // dedup key: this specific trigger
+      entryPrice: bars[last].close, // enter at the current price
+      // Hold horizon bars forward from the latest bar; closed at market later.
+      exitDueTime: bars[last].time + H * barSeconds,
+    };
+  });
+  return per.filter(Boolean);
+}
+
 // Lower-level scanner used by the AI Trader: returns one signal per trigger with
 // the entry (trigger bar) and the exit `primaryHorizon` bars later.
 export async function collectSignals(scenario, provider) {

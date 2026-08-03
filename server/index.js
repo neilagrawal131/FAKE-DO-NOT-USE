@@ -283,7 +283,7 @@ app.post(
 app.delete(
   '/api/aitrader/strategies/:id',
   wrap(async (req, res) => {
-    await aitrader.removeStrategy(req.params.id, yahoo);
+    await aitrader.removeStrategy(req.params.id, yahoo, { purge: true });
     res.json(await aitraderState());
   })
 );

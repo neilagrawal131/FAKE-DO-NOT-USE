@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectSignals } from './backtest.js';
+import { collectSignals, liveTriggers } from './backtest.js';
 import { describeScenario } from './scenario.js';
 import { sectorLabel } from './universe.js';
 import * as portfolio from './portfolio.js';
@@ -104,7 +104,10 @@ export function strategies() {
 }
 
 // Returns true if added, false if an identical pattern already exists.
-export function addStrategy(scenario, name, owner = 'user') {
+// `liveEntry` patterns also open a position immediately whenever the pattern is
+// triggering on the current bar (used by the autonomous Strategist so it trades
+// as soon as a pattern is live, instead of waiting for a brand-new trigger bar).
+export function addStrategy(scenario, name, owner = 'user', liveEntry = false) {
   const s = load();
   if (hasStrategy(scenario)) return false;
   seq += 1;
@@ -114,6 +117,7 @@ export function addStrategy(scenario, name, owner = 'user') {
     scenario,
     enabled: true,
     owner,
+    liveEntry,
     tradeAmount: DEFAULT_TRADE,
     createdAt: Math.floor(Date.now() / 1000),
   });
@@ -126,15 +130,35 @@ export function setEnabled(id, enabled) {
   if (st) st.enabled = enabled;
   persist();
 }
-// Removing a pattern liquidates its open positions on the shared account.
-export async function removeStrategy(id, provider) {
+// Removing a pattern liquidates its open positions on the shared account. Its
+// CLOSED trades are kept (as history) so realized P&L survives the autonomous
+// Strategist constantly promoting/replacing patterns; only leftover pending
+// entry markers for this strategy are cleared. The ledger is pruned separately.
+export async function removeStrategy(id, provider, opts = {}) {
   const s = load();
   await liquidateStrategy(id, provider);
   s.strategies = s.strategies.filter((x) => x.id !== id);
-  for (const [sid, t] of Object.entries(s.trades)) {
-    if (t.strategyId === id) delete s.trades[sid];
+  if (opts.purge) {
+    // Hard removal (manual "remove"): drop this pattern's trades entirely.
+    for (const [sid, t] of Object.entries(s.trades)) {
+      if (t.strategyId === id) delete s.trades[sid];
+    }
   }
+  pruneLedger();
   persist();
+}
+
+// Keep the ledger bounded: retain all open trades plus the most recent closed
+// ones. Prunes matching entry/exit markers too.
+function pruneLedger() {
+  const s = load();
+  const closed = Object.values(s.trades).filter((t) => t.status === 'closed').sort((a, b) => (b.exitTime || 0) - (a.exitTime || 0));
+  const KEEP = 600;
+  for (const t of closed.slice(KEEP)) {
+    delete s.trades[t.id];
+    delete s.entries[t.id];
+    delete s.exits[t.id];
+  }
 }
 export async function reset(provider) {
   const s = load();
@@ -248,6 +272,55 @@ export async function evaluate(provider) {
 
   // Final sweep: close anything whose horizon bar now exists (up to now).
   closeMatured(Math.floor(Date.now() / 1000));
+
+  // ---- live-entry pass (Strategist patterns) --------------------------------
+  // Open a position NOW, at the current price, for any live-entry pattern that is
+  // triggering on its most recent bar and has no open position for that symbol.
+  const liveStrats = s.strategies.filter((x) => x.enabled && x.liveEntry);
+  for (const strat of liveStrats) {
+    let triggers = [];
+    try {
+      triggers = await liveTriggers(strat.scenario, provider);
+    } catch {
+      triggers = [];
+    }
+    const intraday = strat.scenario.timeframe === 'intraday';
+    for (const t of triggers) {
+      const id = sigId(strat.id, t.symbol, `live-${t.barTime}`);
+      if (s.entries[id]) continue; // already acted on this exact trigger bar
+      if (openTrades().some((o) => o.strategyId === strat.id && o.symbol === t.symbol)) continue;
+      const price = t.entryPrice;
+      if (!(price > 0)) continue;
+      const shares = Math.max(1, Math.floor((strat.tradeAmount || DEFAULT_TRADE) / price));
+      const now = Math.floor(Date.now() / 1000);
+      try {
+        portfolio.trade({ side: 'buy', symbol: t.symbol, shares, price, ts: now, source: 'ai', strategyId: strat.id, strategyName: strat.name });
+      } catch {
+        continue; // insufficient cash — retry on a later tick
+      }
+      s.entries[id] = shares;
+      s.trades[id] = {
+        id, strategyId: strat.id, strategyName: strat.name, symbol: t.symbol, shares,
+        entryTime: now, entryDate: fmtTime(now, intraday), entryPrice: price,
+        exitDueTime: t.exitDueTime, exitDuePrice: null, live: true,
+        exitTime: null, exitDate: null, exitPrice: null, status: 'open', pnl: null, pnlPct: null, intraday,
+      };
+    }
+  }
+
+  // Close live positions whose forward horizon has elapsed (wall clock), at the
+  // current market price.
+  const nowTs = Math.floor(Date.now() / 1000);
+  const dueLive = openTrades().filter((t) => t.live && t.exitDueTime != null && t.exitDueTime <= nowTs);
+  for (const t of dueLive) {
+    let price = t.entryPrice;
+    try {
+      price = (await provider.lastPrice(t.symbol)).price || price;
+    } catch {
+      /* fall back to entry price */
+    }
+    sellOut(t, price, nowTs);
+  }
 
   persist();
 }

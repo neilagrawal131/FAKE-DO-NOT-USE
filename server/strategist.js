@@ -318,7 +318,7 @@ async function reconcile() {
   for (const e of desired) {
     const sig = scenarioSig(e.scenario);
     if (ownedSigs.has(sig)) continue;
-    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist');
+    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true);
     if (added) logEvent('promote', e.label, `promoted to live trading — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
   }
 }
