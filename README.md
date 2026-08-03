@@ -99,7 +99,9 @@ DATA_SOURCE=mock npm start
 | `DATA_SOURCE`   | auto                 | `polygon`, `yahoo`, or `mock`. Defaults to `polygon` when a key is set, else `yahoo`. |
 | `POLYGON_API_KEY` | —                  | Polygon.io key (put it in `.env`). Enables real quotes + deep history. |
 | `POLYGON_INTRADAY_MAX_DAYS` | `730`    | How far back your Polygon plan serves 30-min intraday.       |
-| `MARKET_CACHE_MS` | `10000`            | Global cap: each piece of market data is pulled from the provider at most once per this many ms (default 10s). Lower = fresher but more API calls. |
+| `MARKET_CACHE_MS` | `10000`            | Global cap: each piece of live market data (quotes) is pulled from the provider at most once per this many ms (default 10s). |
+| `DAILY_CACHE_MS` | `1800000`           | How long daily/weekly/monthly bars are cached (default 30 min) — they only change once a day, so this is the biggest cut to provider load. |
+| `POLYGON_COOLDOWN_MS` | `60000`        | After a Polygon rate-limit (429), how long to serve everything from Yahoo before retrying Polygon (default 60s). |
 | `STRATEGIST_TICK_MS` | `10000`         | How often the autonomous AI Strategist runs a discover/improve/trade cycle. |
 | `STRATEGIST_ROSTER` | `60`             | How many patterns the AI Strategist keeps trading live at once (can be set into the hundreds). |
 | `STRATEGIST_TRADE_USD` | `1200`        | Dollars the AI Strategist commits per position (small, so capital spreads across the large roster). |

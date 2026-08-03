@@ -21,13 +21,28 @@ const HAS_POLYGON = Boolean(process.env.POLYGON_API_KEY);
 const SOURCE = (process.env.DATA_SOURCE || (HAS_POLYGON ? 'polygon' : 'yahoo')).toLowerCase();
 
 // If a Polygon call fails (rate limit, plan limit, network), transparently fall
-// back to Yahoo for that call so the frontend never breaks.
+// back to Yahoo for that call so the frontend never breaks. A circuit breaker
+// stops hammering Polygon after a rate-limit (429): the first 429 opens the
+// circuit for a cooldown, during which every call goes straight to Yahoo (no more
+// per-request 429 spam and no wasted latency). After the cooldown it retries
+// Polygon; if it's still limited the circuit re-opens.
+const POLYGON_COOLDOWN_MS = Number(process.env.POLYGON_COOLDOWN_MS) || 60_000;
 function withFallback(primary, backup) {
+  let coolUntil = 0;
   const wrap = (name) => async (...args) => {
+    if (Date.now() < coolUntil) return backup[name](...args); // circuit open → Yahoo
     try {
       return await primary[name](...args);
     } catch (err) {
-      console.warn(`[polygon] ${name} failed (${err.message}); falling back to Yahoo`);
+      const rateLimited = /rate limit|\b429\b/i.test(err.message || '');
+      if (rateLimited) {
+        if (Date.now() >= coolUntil) {
+          console.warn(`[polygon] rate limited — pausing Polygon for ${POLYGON_COOLDOWN_MS / 1000}s, serving from Yahoo`);
+        }
+        coolUntil = Date.now() + POLYGON_COOLDOWN_MS;
+      } else {
+        console.warn(`[polygon] ${name} failed (${err.message}); using Yahoo`);
+      }
       return backup[name](...args);
     }
   };
@@ -47,15 +62,21 @@ function withFallback(primary, backup) {
 // distinct request is served from this cache for the window. In-flight requests
 // are shared so bursts collapse to one call; errors are not cached.
 const MARKET_CACHE_MS = Number(process.env.MARKET_CACHE_MS) || 10_000;
+// Daily/weekly/monthly bars only change once per trading day, so cache them far
+// longer than live quotes — this is the single biggest cut to provider load
+// (the Strategist backtests hundreds of symbols on daily bars).
+const DAILY_CACHE_MS = Number(process.env.DAILY_CACHE_MS) || 30 * 60_000;
+const DAILY_INTERVALS = new Set(['1d', '1wk', '1mo']);
 function cachedProvider(p, ttlMs) {
   const store = new Map(); // key -> { promise, expires }
+  const ttlFor = (name, args) => (name === 'chart' && DAILY_INTERVALS.has(String(args[2])) ? DAILY_CACHE_MS : ttlMs);
   const memo = (name) => (...args) => {
     const key = `${name}|${args.join('|')}`;
     const now = Date.now();
     const hit = store.get(key);
     if (hit && hit.expires > now) return hit.promise;
     const promise = Promise.resolve().then(() => p[name](...args));
-    store.set(key, { promise, expires: now + ttlMs });
+    store.set(key, { promise, expires: now + ttlFor(name, args) });
     promise.catch(() => {
       const h = store.get(key);
       if (h && h.promise === promise) store.delete(key); // don't cache failures
