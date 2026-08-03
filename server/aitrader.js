@@ -198,7 +198,20 @@ function sellOut(trade, price, ts) {
 }
 
 // ---- the engine: execute pending entries/exits on the shared account ----
+// Guarded so overlapping callers (background loop, strategist, manual actions)
+// can't run the heavy scan concurrently and pile up provider requests.
+let evaluating = false;
 export async function evaluate(provider) {
+  if (evaluating) return;
+  evaluating = true;
+  try {
+    await runEvaluate(provider);
+  } finally {
+    evaluating = false;
+  }
+}
+
+async function runEvaluate(provider) {
   const s = load();
   const hasEnabled = s.strategies.some((x) => x.enabled);
   const hasOpen = Object.values(s.trades).some((t) => t.status === 'open');

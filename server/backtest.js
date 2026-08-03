@@ -123,6 +123,16 @@ function maKey(c) {
   return `${c.maType}:${c.period}`;
 }
 
+// Defend against malformed provider output: drop null/invalid bars (a single bad
+// element would otherwise crash every scan with "reading 'time' of null"), and
+// guarantee bars are in ascending time order.
+function cleanBars(data) {
+  const bars = (data && data.bars) || [];
+  return bars
+    .filter((b) => b && Number.isFinite(b.time) && Number.isFinite(b.close) && Number.isFinite(b.open))
+    .sort((a, b) => a.time - b.time);
+}
+
 export async function runBacktest(scenario, provider) {
   const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
   const intraday = scenario.timeframe === 'intraday';
@@ -139,7 +149,7 @@ export async function runBacktest(scenario, provider) {
 
   const perSymbol = await mapLimit(symbols, 6, async (sym) => {
     const data = await provider.chart(sym, range, interval);
-    const bars = data.bars || [];
+    const bars = cleanBars(data);
     if (bars.length < 30) return null;
 
     const maCache = new Map();
@@ -226,7 +236,7 @@ export async function liveTriggers(scenario, provider) {
 
   const per = await mapLimit(symbols, 6, async (sym) => {
     const data = await provider.chart(sym, range, interval);
-    const bars = data.bars || [];
+    const bars = cleanBars(data);
     if (bars.length < 30) return null;
     const maCache = new Map();
     for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
@@ -265,7 +275,7 @@ export async function collectSignals(scenario, provider) {
 
   const per = await mapLimit(symbols, 6, async (sym) => {
     const data = await provider.chart(sym, range, interval);
-    const bars = data.bars || [];
+    const bars = cleanBars(data);
     if (bars.length < 30) return [];
     const maCache = new Map();
     for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));

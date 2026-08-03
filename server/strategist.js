@@ -334,7 +334,8 @@ async function cycle() {
   try {
     await runGeneration();
     await reconcile();
-    await aitrader.evaluate(provider); // execute triggers / close matured positions
+    // Trading itself is executed by the dedicated AI Trader engine loop (see
+    // server/index.js startEngine), so we only discover + reconcile the roster here.
     persist();
   } catch (err) {
     console.error('[strategist] cycle error:', err.message);

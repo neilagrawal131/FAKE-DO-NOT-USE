@@ -159,9 +159,9 @@ async function priceMap(symbols) {
 app.get(
   '/api/portfolio',
   wrap(async (req, res) => {
-    // Let the AI Trader act (buy new triggers / close matured positions) on the
-    // shared account before we snapshot it, so the blotter and positions are current.
-    await aitrader.evaluate(yahoo);
+    // Read-only snapshot: the AI Trader engine runs on its own background timer
+    // (see startEngine below), so this just marks held positions to cached prices
+    // and returns instantly instead of re-running the whole engine per request.
     const symbols = portfolio.heldSymbols();
     const marks = symbols.length ? await priceMap(symbols) : {};
     res.json(portfolio.summarize(marks));
@@ -280,9 +280,12 @@ app.get(
 );
 
 // --- AI Trader (algorithmic paper trader, on the shared account) ---------------
-// Run the engine, then return the shared account snapshot + AI-specific view.
-async function aitraderState() {
-  await aitrader.evaluate(yahoo);
+// Read-only snapshot of the shared account + AI-specific view. The engine itself
+// runs on the background timer (startEngine), so this never blocks the request on
+// a full scan. `act` triggers one background (non-blocking) engine run after a
+// user action so new trades show up on the next poll.
+async function aitraderState({ act = false } = {}) {
+  if (act) aitrader.evaluate(yahoo).catch((e) => console.warn('[aitrader] evaluate:', e.message));
   const marks = await priceMap(portfolio.heldSymbols());
   return { account: portfolio.summarize(marks), ...(await aitrader.view(yahoo)) };
 }
@@ -302,7 +305,7 @@ app.post(
       return res.status(400).json({ error: 'A pattern needs at least one trigger condition.' });
     }
     aitrader.addStrategy(normalizeScenario(scenario), name);
-    res.json(await aitraderState());
+    res.json(await aitraderState({ act: true }));
   })
 );
 
@@ -310,7 +313,7 @@ app.post(
   '/api/aitrader/strategies/:id/toggle',
   wrap(async (req, res) => {
     aitrader.setEnabled(req.params.id, Boolean(req.body && req.body.enabled));
-    res.json(await aitraderState());
+    res.json(await aitraderState({ act: true }));
   })
 );
 
@@ -364,9 +367,23 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: err.message || 'Internal error' });
 });
 
+// Background AI Trader engine: execute pending entries/exits on the shared
+// account on a timer, off the request path. This keeps the AI Trader / portfolio
+// pages fast (they only read state) and bounds provider usage to one scan per
+// interval regardless of how many clients are polling.
+const ENGINE_MS = Number(process.env.AITRADER_TICK_MS) || 10_000;
+function startEngine() {
+  const tick = () => aitrader.evaluate(yahoo).catch((e) => console.warn('[aitrader] engine:', e.message));
+  const t = setInterval(tick, ENGINE_MS);
+  if (t.unref) t.unref();
+  tick(); // run once at boot so state is warm
+}
+
 app.listen(PORT, () => {
   console.log(`\n  Shubh Quant Dashboard running at http://localhost:${PORT}\n`);
   // Kick off the autonomous AI Strategist: it discovers, promotes, replaces and
   // trades patterns on its own timer, with no user interaction required.
   strategist.start(yahoo);
+  // Execute AI Trader orders on a background timer (off the request path).
+  startEngine();
 });
