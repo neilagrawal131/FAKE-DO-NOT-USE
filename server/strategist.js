@@ -20,9 +20,9 @@ import { runBacktest } from './backtest.js';
 import { normalizeScenario } from './scenario.js';
 import { TARGET_SECTORS, sectorLabel } from './universe.js';
 import * as aitrader from './aitrader.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { saveJSON, loadJSON } from './store.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA_DIR = join(root, 'data');
@@ -92,11 +92,7 @@ function fresh() {
 }
 function load() {
   if (state) return state;
-  try {
-    state = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : fresh();
-  } catch {
-    state = fresh();
-  }
+  state = loadJSON(FILE, fresh) || fresh();
   if (typeof state.enabled !== 'boolean') state.enabled = true;
   if (!state.pool) state.pool = {};
   if (!Array.isArray(state.log)) state.log = [];
@@ -105,12 +101,7 @@ function load() {
   return state;
 }
 function persist() {
-  try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(FILE, JSON.stringify(state, null, 2));
-  } catch (err) {
-    console.error('[strategist] persist failed:', err.message);
-  }
+  saveJSON(FILE, state);
 }
 function logEvent(type, label, detail) {
   const s = load();

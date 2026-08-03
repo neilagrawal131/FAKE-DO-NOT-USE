@@ -2,9 +2,9 @@
 // blotter. Persisted to a JSON file so restarts keep the account. Single-account
 // by design — this is a personal simulator, not a multi-tenant broker.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { saveJSON, loadJSON } from './store.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA_DIR = join(root, 'data');
@@ -26,26 +26,12 @@ let state = null;
 
 function load() {
   if (state) return state;
-  try {
-    if (existsSync(FILE)) {
-      state = JSON.parse(readFileSync(FILE, 'utf8'));
-    } else {
-      state = fresh();
-      persist();
-    }
-  } catch {
-    state = fresh();
-  }
+  state = loadJSON(FILE, fresh);
   return state;
 }
 
 function persist() {
-  try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(FILE, JSON.stringify(state, null, 2));
-  } catch (err) {
-    console.error('[portfolio] persist failed:', err.message);
-  }
+  saveJSON(FILE, state);
 }
 
 let orderSeq = 0;

@@ -6,5 +6,8 @@ public/vendor/
 .env
 data/aitrader.json
 data/strategist.json
+data/*.bak
+data/*.tmp
+data/*.corrupt
 aitrader.zip
 *.zip

@@ -9,9 +9,9 @@
 // It keeps its own ledger only for dedup (execute each signal once) and for the
 // AI Trader tab's pattern-level stats.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { saveJSON, loadJSON } from './store.js';
 import { collectSignals, liveTriggers } from './backtest.js';
 import { describeScenario } from './scenario.js';
 import { sectorLabel, symbolSector, sectorTarget, SECTOR_TARGETS } from './universe.js';
@@ -49,11 +49,7 @@ let seq = 0;
 
 function load() {
   if (state) return state;
-  try {
-    state = existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : {};
-  } catch {
-    state = {};
-  }
+  state = loadJSON(FILE, () => ({})) || {};
   if (!Array.isArray(state.strategies)) state.strategies = [];
   if (!state.entries) state.entries = {}; // signalId -> shares (executed buys)
   if (!state.exits) state.exits = {}; // signalId -> true (executed sells)
@@ -61,12 +57,7 @@ function load() {
   return state;
 }
 function persist() {
-  try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(FILE, JSON.stringify(state, null, 2));
-  } catch (err) {
-    console.error('[aitrader] persist failed:', err.message);
-  }
+  saveJSON(FILE, state);
 }
 
 function compact(n) {

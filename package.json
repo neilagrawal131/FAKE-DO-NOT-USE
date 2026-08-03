@@ -6,7 +6,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
+    "dev": "node --watch-path=./server --watch-path=./public server/index.js",
     "postinstall": "node scripts/vendor.js"
   },
   "engines": {
