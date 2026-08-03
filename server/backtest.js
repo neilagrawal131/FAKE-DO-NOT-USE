@@ -215,12 +215,36 @@ export async function runBacktest(scenario, provider) {
   };
 }
 
-// "Is this pattern actionable right now?" — for each symbol, finds the most
-// recent trigger within its holding window (the last `primaryHorizon` bars, so a
-// trade opened at that trigger would still be open) and, if found, returns a live
-// entry at the CURRENT price with a forward exit scheduled `primaryHorizon` bars
-// ahead. Used by the autonomous Strategist to open real positions as soon as a
-// promoted pattern is active — without replaying old, already-closed history.
+// Is the pattern "active" on the latest bar — the condition the trader should
+// act on now? Moving-average conditions are treated as the REGIME they identify
+// (an "MA cross ↑" pattern is actionable while price is above that MA, not only
+// on the single cross bar — otherwise rare crosses almost never coincide with
+// "now" and the trader sits idle). Event conditions (a % move, a fair-value gap,
+// an opening move) must have actually occurred within the recent `fresh` window.
+function activeNow(conditions, bars, maCache, last, fresh) {
+  for (const c of conditions) {
+    if (c.kind === 'ma_cross' || c.kind === 'ma_state') {
+      const ma = maCache.get(maKey(c));
+      const cur = ma[last];
+      if (cur == null) return false;
+      if (c.dir === 'above' && !(bars[last].close > cur)) return false;
+      if (c.dir === 'below' && !(bars[last].close < cur)) return false;
+    } else {
+      let hit = false;
+      for (let i = last; i >= 1 && last - i <= fresh; i--) {
+        if (conditionsMet([c], bars, maCache, i)) { hit = true; break; }
+      }
+      if (!hit) return false;
+    }
+  }
+  return true;
+}
+
+// "Is this pattern actionable right now?" — for each symbol, returns a live entry
+// at the CURRENT price (with a forward exit `primaryHorizon` bars ahead) when the
+// pattern is active on the latest bar per `activeNow` above. Used by the
+// autonomous Strategist to deploy capital into the regime a promoted pattern
+// identifies, rather than waiting for a rare trigger bar to coincide with today.
 export async function liveTriggers(scenario, provider) {
   const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
   const intraday = scenario.timeframe === 'intraday';
@@ -228,7 +252,7 @@ export async function liveTriggers(scenario, provider) {
   const range = intraday ? intradayRange(scenario.lookbackDays) : fetchRange(scenario.lookbackDays);
   const barSeconds = intraday ? 1800 : 86400;
   const H = scenario.primaryHorizon;
-  const FRESH = Math.min(Math.max(H, 1), 20); // how recent a trigger still counts as "live"
+  const FRESH = Math.min(Math.max(H, 1), 20); // how recent an event trigger still counts as "live"
 
   const maDefs = scenario.conditions
     .filter((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')
@@ -241,15 +265,10 @@ export async function liveTriggers(scenario, provider) {
     const maCache = new Map();
     for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
     const last = bars.length - 1;
-    // Most recent bar (within the fresh window) where the pattern fired.
-    let trigIdx = -1;
-    for (let i = last; i >= 1 && last - i <= FRESH; i--) {
-      if (conditionsMet(scenario.conditions, bars, maCache, i)) { trigIdx = i; break; }
-    }
-    if (trigIdx === -1) return null;
+    if (!activeNow(scenario.conditions, bars, maCache, last, FRESH)) return null;
     return {
       symbol: sym,
-      barTime: bars[trigIdx].time, // dedup key: this specific trigger
+      barTime: bars[last].time, // dedup key: re-enter only when a new bar forms
       entryPrice: bars[last].close, // enter at the current price
       // Hold horizon bars forward from the latest bar; closed at market later.
       exitDueTime: bars[last].time + H * barSeconds,
