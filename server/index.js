@@ -379,8 +379,21 @@ function startEngine() {
   tick(); // run once at boot so state is warm
 }
 
+// Keep an uncaught error from killing the process — a crash + auto-restart is
+// what makes the account appear to "reset" (a fresh process reloads state, and a
+// crash mid-write used to corrupt it). Log loudly and stay up.
+process.on('unhandledRejection', (e) => console.error('[fatal] unhandledRejection:', (e && e.stack) || e));
+process.on('uncaughtException', (e) => console.error('[fatal] uncaughtException:', (e && e.stack) || e));
+
 app.listen(PORT, () => {
   console.log(`\n  Shubh Quant Dashboard running at http://localhost:${PORT}\n`);
+  // Report exactly what state loaded, so a restart that started fresh is obvious.
+  const pf = portfolio.getState();
+  const positions = Object.keys(pf.positions || {}).length;
+  console.log(
+    `[state] loaded account: $${Math.round(pf.cash)} cash · ${positions} positions · ${(pf.orders || []).length} orders` +
+      (pf.cash === 100000 && positions === 0 ? '  (fresh account)' : '')
+  );
   // Kick off the autonomous AI Strategist: it discovers, promotes, replaces and
   // trades patterns on its own timer, with no user interaction required.
   strategist.start(yahoo);

@@ -45,6 +45,9 @@ export function getState() {
 }
 
 export function reset() {
+  // Loud, timestamped log so an unexpected reset is traceable to an actual
+  // reset() call (vs. a process restart loading fresh state).
+  console.warn(`[portfolio] RESET to $${STARTING_CASH} at ${new Date().toISOString()}`);
   state = fresh();
   persist();
   return state;

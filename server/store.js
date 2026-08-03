@@ -17,7 +17,11 @@ export function saveJSON(file, data) {
     const dir = dirname(file);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const tmp = `${file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2));
+    const json = JSON.stringify(data, null, 2);
+    // Never write an empty/degenerate object over real data.
+    if (json.length < 3) return false;
+    writeFileSync(tmp, json);
+    if (existsSync(file)) { try { copyFileSync(file, `${file}.bak`); } catch { /* best-effort */ } } // roll last-good
     renameSync(tmp, file); // atomic replace — never a partially written primary
     return true;
   } catch (err) {
