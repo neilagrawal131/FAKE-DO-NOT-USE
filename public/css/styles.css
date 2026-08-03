@@ -485,6 +485,47 @@ input { font-family: inherit; }
 .applied-tag { font-weight: 800; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: rgba(38,166,154,0.2); color: var(--up); }
 .active-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: var(--bg-elev-2); color: var(--text-faint); }
 
+/* autonomous strategist dashboard */
+.auto-badge {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.3px; vertical-align: middle;
+  margin-left: 10px; padding: 3px 10px; border-radius: 999px;
+  background: rgba(38,166,154,0.15); color: var(--up);
+  animation: pulse-live 2s ease-in-out infinite;
+}
+.auto-badge.paused { background: var(--bg-elev-2); color: var(--text-faint); animation: none; }
+@keyframes pulse-live { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+.strat-status { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.strat-stat {
+  flex: 1 1 130px; background: var(--bg-elev-1); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px;
+}
+.strat-stat-v { font-size: 20px; font-weight: 800; color: var(--text); }
+.strat-stat-k { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.4px; }
+
+.strat-roster-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-elev-1); margin-bottom: 8px;
+}
+.strat-roster-name { font-weight: 700; flex: 1 1 220px; }
+.strat-chip { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: var(--bg-elev-2); color: var(--text-dim); }
+.strat-chip.up { color: var(--up); }
+.strat-chip.down { color: var(--down); }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.dot.live { background: var(--up); box-shadow: 0 0 0 3px rgba(38,166,154,0.18); animation: pulse-live 2s ease-in-out infinite; }
+
+.strat-log-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.strat-log-row:last-child { border-bottom: none; }
+.strat-log-ic { flex: none; }
+.strat-log-body { flex: 1 1 auto; color: var(--text-dim); }
+.strat-log-ago { flex: none; font-size: 11px; color: var(--text-faint); }
+.strat-log-promote .strat-log-body b { color: var(--up); }
+.strat-log-demote .strat-log-body b { color: var(--down); }
+
 /* modal */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.62);

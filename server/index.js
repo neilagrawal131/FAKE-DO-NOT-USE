@@ -296,18 +296,23 @@ app.post(
   })
 );
 
-// --- AI Strategist (auto-backtest + apply best patterns) -----------------------
-app.get('/api/strategist/sectors', (req, res) => res.json(sectorList()));
+// --- AI Strategist (fully autonomous: discovers, promotes, trades) -------------
+// The engine runs on its own timer (see strategist.start below). These endpoints
+// are read-only status + an optional pause/resume and "run a generation now".
+app.get('/api/strategist', (req, res) => res.json(strategist.getState()));
+
+app.post(
+  '/api/strategist/toggle',
+  (req, res) => {
+    const enabled = strategist.setEnabled(Boolean(req.body && req.body.enabled));
+    res.json({ enabled, ...strategist.getState() });
+  }
+);
 
 app.post(
   '/api/strategist/run',
   wrap(async (req, res) => {
-    const { sectorKey, topK } = req.body || {};
-    const result = await strategist.run(yahoo, {
-      sectorKey: sectorKey || 'market',
-      topK: Math.max(1, Math.min(6, Number(topK) || 3)),
-    });
-    res.json(result);
+    res.json(await strategist.forceCycle());
   })
 );
 
@@ -327,4 +332,7 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`\n  Shubh Quant Dashboard running at http://localhost:${PORT}\n`);
+  // Kick off the autonomous AI Strategist: it discovers, promotes, replaces and
+  // trades patterns on its own timer, with no user interaction required.
+  strategist.start(yahoo);
 });

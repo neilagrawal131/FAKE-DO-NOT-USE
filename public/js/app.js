@@ -1205,104 +1205,134 @@ function initQuickPicks() {
 // AI Strategist
 // ---------------------------------------------------------------------------
 let strategistReady = false;
+let strategistTimer = null;
 async function initStrategist() {
-  if (strategistReady) return;
-  strategistReady = true;
-  try {
-    const sectors = await api('/api/strategist/sectors');
-    const preferred = ['market', 'technology', 'semiconductors', 'biotech'];
-    const rank = (k) => {
-      const i = preferred.indexOf(k);
-      return i === -1 ? 999 : i;
-    };
-    sectors.sort((a, b) => rank(a.key) - rank(b.key));
-    $('#strat-universe').innerHTML = sectors
-      .map((s) => `<option value="${s.key}">${escapeHtml(s.label)} (${s.count})</option>`)
-      .join('');
-  } catch {
-    /* leave empty */
+  if (!strategistReady) {
+    strategistReady = true;
+    $('#strat-toggle').addEventListener('click', toggleStrategist);
   }
-  $('#run-strategist').addEventListener('click', runStrategist);
+  refreshStrategist();
+  if (strategistTimer) clearInterval(strategistTimer);
+  // Poll while the tab is visible so the dashboard tracks the live engine.
+  strategistTimer = setInterval(() => {
+    if (!$('#view-strategist').hidden) refreshStrategist();
+    else { clearInterval(strategistTimer); strategistTimer = null; }
+  }, 4000);
 }
 
-async function runStrategist() {
-  const btn = $('#run-strategist');
-  const out = $('#strategist-results');
+async function toggleStrategist() {
+  const btn = $('#strat-toggle');
+  const wantEnable = btn.textContent.trim() === 'Resume';
   btn.disabled = true;
-  const label = btn.textContent;
-  btn.innerHTML = '<span class="spinner"></span> Backtesting…';
-  out.innerHTML = '<div class="loading"><span class="spinner"></span> Backtesting the pattern library across the universe…</div>';
   try {
-    const data = await api('/api/strategist/run', {
+    const data = await api('/api/strategist/toggle', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sectorKey: $('#strat-universe').value, topK: Number($('#strat-topk').value) || 3 }),
+      body: JSON.stringify({ enabled: wantEnable }),
     });
     renderStrategist(data);
-    refreshPortfolio(); // applied patterns may start trading
-    if (data.appliedCount) toast(`Applied the top ${data.appliedCount} pattern(s) to the AI Trader.`, 'success');
   } catch (err) {
-    out.innerHTML = `<div class="no-results">Backtest failed: ${escapeHtml(err.message)}</div>`;
+    toast(`Could not ${wantEnable ? 'resume' : 'pause'}: ${err.message}`, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = label;
   }
 }
 
+async function refreshStrategist() {
+  try {
+    renderStrategist(await api('/api/strategist'));
+  } catch {
+    /* transient — next poll will retry */
+  }
+}
+
+function agoLabel(ts) {
+  if (!ts) return 'never';
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+const LOG_ICON = { discover: '🔎', promote: '⬆️', demote: '⬇️', pause: '⏸', resume: '▶️' };
+
 function renderStrategist(data) {
-  const out = $('#strategist-results');
-  const rows = data.results
+  if (!data) return;
+
+  // Live badge + pause/resume button reflect engine state.
+  const badge = $('#strat-live');
+  if (badge) {
+    badge.textContent = data.enabled ? '● autonomous' : '● paused';
+    badge.classList.toggle('paused', !data.enabled);
+  }
+  const tbtn = $('#strat-toggle');
+  if (tbtn) tbtn.textContent = data.enabled ? 'Pause' : 'Resume';
+
+  // Status strip.
+  $('#strat-status').innerHTML = `
+    <div class="strat-stat"><span class="strat-stat-v">${data.generation.toLocaleString()}</span><span class="strat-stat-k">generations</span></div>
+    <div class="strat-stat"><span class="strat-stat-v">${data.poolSize}</span><span class="strat-stat-k">patterns explored</span></div>
+    <div class="strat-stat"><span class="strat-stat-v">${data.qualified}</span><span class="strat-stat-k">qualified</span></div>
+    <div class="strat-stat"><span class="strat-stat-v">${data.roster.length}/${data.targetRoster}</span><span class="strat-stat-k">live now</span></div>
+    <div class="strat-stat"><span class="strat-stat-v">${data.running ? 'working…' : agoLabel(data.lastCycle)}</span><span class="strat-stat-k">last cycle</span></div>`;
+
+  // Live roster.
+  const roster = $('#strat-roster');
+  if (!data.roster.length) {
+    roster.innerHTML = '<div class="empty">Nothing live yet — the strategist promotes a pattern as soon as one clears the reward/risk bar.</div>';
+  } else {
+    roster.innerHTML = data.roster
+      .map((r) => {
+        const s = r.stats;
+        return `<div class="strat-roster-row">
+          <span class="dot live"></span>
+          <span class="strat-roster-name">${escapeHtml(r.name)}</span>
+          ${s ? `<span class="strat-chip">score <b>${s.score.toFixed(3)}</b></span>
+                 <span class="strat-chip">win ${pctOnly(s.winRate)}</span>
+                 <span class="strat-chip ${s.mean >= 0 ? 'up' : 'down'}">exp ${sPct(s.mean)}</span>
+                 <span class="strat-chip">σ ${s.std.toFixed(1)}%</span>` : ''}
+        </div>`;
+      })
+      .join('');
+  }
+
+  // Leaderboard.
+  const rows = data.leaderboard
     .map((r, i) => {
       const s = r.stats;
-      const tag = r.applied
-        ? '<span class="applied-tag">APPLIED</span>'
-        : r.alreadyActive
-          ? '<span class="active-tag">active</span>'
-          : '';
-      if (!s) {
-        return `<tr><td>${i + 1}</td><td>${escapeHtml(r.label)} ${tag}</td><td colspan="7" style="color:var(--text-faint)">no occurrences</td></tr>`;
-      }
-      return `
-        <tr class="${r.applied ? 'applied' : ''}">
-          <td>${i + 1}</td>
-          <td>${escapeHtml(r.label)} ${tag}</td>
-          <td>${s.n}</td>
-          <td class="${s.mean >= 0 ? 'up' : 'down'}">${sPct(s.mean)}</td>
-          <td>${pctOnly(s.winRate)}</td>
-          <td class="up">${sPct(s.avgWin)}</td>
-          <td class="down">${sPct(s.avgLoss)}</td>
-          <td class="down">${sPct(s.worst)}</td>
-          <td>${s.std.toFixed(1)}%</td>
-          <td><b>${s.score.toFixed(3)}</b></td>
-        </tr>`;
+      const tag = r.live ? '<span class="applied-tag">LIVE</span>' : r.qualified ? '<span class="active-tag">ready</span>' : '';
+      return `<tr class="${r.live ? 'applied' : ''}">
+        <td>${i + 1}</td>
+        <td>${escapeHtml(r.label)} ${tag}</td>
+        <td>${s.n}</td>
+        <td class="${s.mean >= 0 ? 'up' : 'down'}">${sPct(s.mean)}</td>
+        <td>${pctOnly(s.winRate)}</td>
+        <td class="up">${sPct(s.avgWin)}</td>
+        <td class="down">${sPct(s.avgLoss)}</td>
+        <td>${s.std.toFixed(1)}%</td>
+        <td><b>${s.score.toFixed(3)}</b></td>
+      </tr>`;
     })
     .join('');
+  $('#strat-leaderboard').innerHTML = data.leaderboard.length
+    ? `<div style="overflow-x:auto"><table class="h-table">
+        <thead><tr><th>#</th><th>Pattern</th><th>Occ.</th><th>Expected</th><th>Win</th>
+          <th>Avg win</th><th>Avg loss</th><th>Risk (σ)</th><th>Score ★</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`
+    : '<div class="empty">Warming up — scanning the pattern space…</div>';
 
-  out.innerHTML = `
-    <div class="universe-note">
-      Backtested <b>${data.tested}</b> patterns across <b>${escapeHtml(data.universe)}</b> ·
-      <b>${data.qualified}</b> qualified (≥${data.minSample} occurrences, positive expectancy) ·
-      <b>${data.appliedCount}</b> applied to the AI Trader.
-      ${data.appliedCount ? ' <a data-goto="trader" style="color:var(--accent);cursor:pointer;text-decoration:underline">See them on the AI Trader →</a>' : ''}
-    </div>
-    <div class="result-block">
-      <h3>Pattern leaderboard <span class="ev-hint">— ranked by reward ÷ risk (score)</span></h3>
-      <div style="overflow-x:auto"><table class="h-table">
-        <thead><tr>
-          <th>#</th><th>Pattern</th><th>Occurrences</th><th>Expected</th><th>Win rate</th>
-          <th>Avg win</th><th>Avg loss</th><th>Worst</th><th>Risk (σ)</th><th>Score ★</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    </div>
-    <div class="disclaimer-sm">
-      Score = average forward return ÷ its volatility (Sharpe-like). Applied patterns trade on the
-      shared paper account <b>going forward</b> — they don't back-fill history. Backtest over
-      historical data; past behavior does not predict future results.
-    </div>`;
-
-  // let "See them on the AI Trader" work
-  out.querySelector('[data-goto]')?.addEventListener('click', (e) => setView(e.target.dataset.goto));
+  // Decision log.
+  const log = $('#strat-log');
+  log.innerHTML = data.log.length
+    ? data.log
+        .map(
+          (e) => `<div class="strat-log-row strat-log-${e.type}">
+            <span class="strat-log-ic">${LOG_ICON[e.type] || '•'}</span>
+            <span class="strat-log-body"><b>${escapeHtml(e.label)}</b> — ${escapeHtml(e.detail || '')}</span>
+            <span class="strat-log-ago">${agoLabel(e.ts)}</span>
+          </div>`
+        )
+        .join('')
+    : '<div class="empty">No decisions yet.</div>';
 }
 
 function boot() {

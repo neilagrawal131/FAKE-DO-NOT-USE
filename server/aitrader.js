@@ -97,8 +97,14 @@ export function hasStrategy(scenario) {
   return s.strategies.some((x) => signatureOf(x.scenario) === sig);
 }
 
+// Lightweight list of strategies (used by the autonomous Strategist to manage
+// only the patterns it owns).
+export function strategies() {
+  return load().strategies.map((x) => ({ id: x.id, name: x.name, owner: x.owner || 'user', scenario: x.scenario, enabled: x.enabled }));
+}
+
 // Returns true if added, false if an identical pattern already exists.
-export function addStrategy(scenario, name) {
+export function addStrategy(scenario, name, owner = 'user') {
   const s = load();
   if (hasStrategy(scenario)) return false;
   seq += 1;
@@ -107,6 +113,7 @@ export function addStrategy(scenario, name) {
     name: name || shortName(scenario),
     scenario,
     enabled: true,
+    owner,
     tradeAmount: DEFAULT_TRADE,
     createdAt: Math.floor(Date.now() / 1000),
   });

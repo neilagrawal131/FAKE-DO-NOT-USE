@@ -223,34 +223,34 @@
         <section class="view" id="view-strategist" hidden>
           <div class="analyst">
             <header class="analyst-head">
-              <h1>🧠 AI Strategist</h1>
+              <h1>🧠 AI Strategist <span class="auto-badge" id="strat-live">● autonomous</span></h1>
               <p>
-                Backtests a library of market patterns across a universe, scores each by
-                <b>reward vs risk</b> (average forward return ÷ its volatility), and
-                <b>auto-applies the best ones to your paper portfolio</b> — they’re handed to
-                the AI Trader, which trades them on your shared account going forward.
+                Runs <b>fully on its own</b> — no input needed. It continuously discovers market
+                patterns, mutates the best ones to <b>raise reward and lower risk</b>, and
+                <b>promotes, replaces and retires</b> them live on your shared paper account
+                through the AI Trader. Everything below updates in real time.
               </p>
             </header>
 
-            <div class="card query-card">
-              <div class="strat-controls">
-                <label class="field">
-                  <span>Universe</span>
-                  <select id="strat-universe"></select>
-                </label>
-                <label class="field">
-                  <span>Auto-apply top</span>
-                  <input id="strat-topk" type="number" min="1" max="6" value="3" />
-                </label>
-                <button class="btn-primary" id="run-strategist">Backtest &amp; apply best</button>
+            <div class="strat-status" id="strat-status"></div>
+
+            <div class="result-block">
+              <div class="trader-block-head">
+                <h3>Live roster <span class="ev-hint">— patterns it is trading right now</span></h3>
+                <button class="btn-ghost" id="strat-toggle">Pause</button>
               </div>
-              <div class="query-hint">
-                Ranks by a Sharpe-like score (higher reward, lower risk). Only patterns with
-                enough occurrences and positive expectancy are applied.
-              </div>
+              <div id="strat-roster"></div>
             </div>
 
-            <div id="strategist-results"></div>
+            <div class="result-block">
+              <h3>Leaderboard <span class="ev-hint">— best patterns found so far, by reward ÷ risk</span></h3>
+              <div id="strat-leaderboard"></div>
+            </div>
+
+            <div class="result-block">
+              <h3>Decision log <span class="ev-hint">— what it discovered, promoted and removed</span></h3>
+              <div id="strat-log"></div>
+            </div>
           </div>
         </section>
       </div>

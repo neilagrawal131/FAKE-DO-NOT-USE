@@ -30,11 +30,17 @@ rail:
   every active pattern with its win rate and P/L, and the full trade log. Toggle a
   pattern off or remove it and its open positions are liquidated.
 
-- **🧠 AI Strategist** — backtests a library of market patterns across a universe,
-  scores each by **reward vs risk** (average forward return ÷ its volatility, a
-  Sharpe-like score), ranks them on a leaderboard, and **auto-applies the best
-  ones to your paper portfolio** by promoting them into the AI Trader. Only
-  patterns with enough occurrences and positive expectancy qualify.
+- **🧠 AI Strategist** — a **fully autonomous** engine that needs no input. On a
+  timer it continuously **discovers** market patterns (MA crosses/states,
+  momentum, dip-buys, fair-value-gaps across every sector), **self-improves** by
+  mutating the current best patterns to **raise reward and lower risk** (a
+  Sharpe-like average-return ÷ volatility score), and **promotes, replaces and
+  retires** them live on your shared paper account through the AI Trader — always
+  keeping only the top qualifying patterns trading. The dashboard shows its live
+  roster, a leaderboard of everything it has found, and a real-time decision log
+  of what it discovered, promoted and removed. A pause/resume button is the only
+  control. (Cadence is configurable via `STRATEGIST_TICK_MS`; roster size via
+  `STRATEGIST_ROSTER`.)
 
 No real money, no brokerage account, no API keys.
 
@@ -93,6 +99,8 @@ DATA_SOURCE=mock npm start
 | `DATA_SOURCE`   | auto                 | `polygon`, `yahoo`, or `mock`. Defaults to `polygon` when a key is set, else `yahoo`. |
 | `POLYGON_API_KEY` | —                  | Polygon.io key (put it in `.env`). Enables real quotes + deep history. |
 | `POLYGON_INTRADAY_MAX_DAYS` | `730`    | How far back your Polygon plan serves 30-min intraday.       |
+| `STRATEGIST_TICK_MS` | `5000`          | How often the autonomous AI Strategist runs a discover/improve/trade cycle. |
+| `STRATEGIST_ROSTER` | `4`              | How many patterns the AI Strategist keeps trading live at once. |
 
 ### Market-data providers
 
