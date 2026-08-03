@@ -11,6 +11,7 @@ import { parseScenario, normalizeScenario, setIntradayMaxDays } from './scenario
 import { runBacktest, fetchRange, intradayRange } from './backtest.js';
 import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
+import * as strategist from './strategist.js';
 
 // Choose the market-data source:
 //   - polygon  (default when POLYGON_API_KEY is set) — real quotes + deep history
@@ -292,6 +293,21 @@ app.post(
   wrap(async (req, res) => {
     await aitrader.reset(yahoo);
     res.json(await aitraderState());
+  })
+);
+
+// --- AI Strategist (auto-backtest + apply best patterns) -----------------------
+app.get('/api/strategist/sectors', (req, res) => res.json(sectorList()));
+
+app.post(
+  '/api/strategist/run',
+  wrap(async (req, res) => {
+    const { sectorKey, topK } = req.body || {};
+    const result = await strategist.run(yahoo, {
+      sectorKey: sectorKey || 'market',
+      topK: Math.max(1, Math.min(6, Number(topK) || 3)),
+    });
+    res.json(result);
   })
 );
 

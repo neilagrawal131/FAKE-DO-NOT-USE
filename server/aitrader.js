@@ -81,8 +81,26 @@ function sigId(strategyId, symbol, time) {
 }
 
 // ---- strategy CRUD ----
+// A stable signature so we don't add the same pattern twice.
+function signatureOf(sc) {
+  return JSON.stringify({
+    sym: sc.symbol || null,
+    sec: sc.sectorKey || null,
+    tf: sc.timeframe || 'daily',
+    ph: sc.primaryHorizon,
+    c: (sc.conditions || []).map((c) => ({ ...c })),
+  });
+}
+export function hasStrategy(scenario) {
+  const s = load();
+  const sig = signatureOf(scenario);
+  return s.strategies.some((x) => signatureOf(x.scenario) === sig);
+}
+
+// Returns true if added, false if an identical pattern already exists.
 export function addStrategy(scenario, name) {
   const s = load();
+  if (hasStrategy(scenario)) return false;
   seq += 1;
   s.strategies.push({
     id: `s${Date.now()}${seq}`,
@@ -93,6 +111,7 @@ export function addStrategy(scenario, name) {
     createdAt: Math.floor(Date.now() / 1000),
   });
   persist();
+  return true;
 }
 export function setEnabled(id, enabled) {
   const s = load();

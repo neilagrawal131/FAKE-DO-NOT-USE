@@ -633,6 +633,7 @@ function setView(view) {
     requestAnimationFrame(() => state.chart.chart.timeScale().fitContent());
   }
   if (view === 'trader') refreshTrader();
+  if (view === 'strategist') initStrategist();
 }
 
 async function showConfig() {
@@ -1198,6 +1199,110 @@ function initQuickPicks() {
     const btn = e.target.closest('.quick-pick');
     if (btn) loadSymbol(btn.dataset.sym);
   });
+}
+
+// ---------------------------------------------------------------------------
+// AI Strategist
+// ---------------------------------------------------------------------------
+let strategistReady = false;
+async function initStrategist() {
+  if (strategistReady) return;
+  strategistReady = true;
+  try {
+    const sectors = await api('/api/strategist/sectors');
+    const preferred = ['market', 'technology', 'semiconductors', 'biotech'];
+    const rank = (k) => {
+      const i = preferred.indexOf(k);
+      return i === -1 ? 999 : i;
+    };
+    sectors.sort((a, b) => rank(a.key) - rank(b.key));
+    $('#strat-universe').innerHTML = sectors
+      .map((s) => `<option value="${s.key}">${escapeHtml(s.label)} (${s.count})</option>`)
+      .join('');
+  } catch {
+    /* leave empty */
+  }
+  $('#run-strategist').addEventListener('click', runStrategist);
+}
+
+async function runStrategist() {
+  const btn = $('#run-strategist');
+  const out = $('#strategist-results');
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.innerHTML = '<span class="spinner"></span> Backtesting…';
+  out.innerHTML = '<div class="loading"><span class="spinner"></span> Backtesting the pattern library across the universe…</div>';
+  try {
+    const data = await api('/api/strategist/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sectorKey: $('#strat-universe').value, topK: Number($('#strat-topk').value) || 3 }),
+    });
+    renderStrategist(data);
+    refreshPortfolio(); // applied patterns may start trading
+    if (data.appliedCount) toast(`Applied the top ${data.appliedCount} pattern(s) to the AI Trader.`, 'success');
+  } catch (err) {
+    out.innerHTML = `<div class="no-results">Backtest failed: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function renderStrategist(data) {
+  const out = $('#strategist-results');
+  const rows = data.results
+    .map((r, i) => {
+      const s = r.stats;
+      const tag = r.applied
+        ? '<span class="applied-tag">APPLIED</span>'
+        : r.alreadyActive
+          ? '<span class="active-tag">active</span>'
+          : '';
+      if (!s) {
+        return `<tr><td>${i + 1}</td><td>${escapeHtml(r.label)} ${tag}</td><td colspan="7" style="color:var(--text-faint)">no occurrences</td></tr>`;
+      }
+      return `
+        <tr class="${r.applied ? 'applied' : ''}">
+          <td>${i + 1}</td>
+          <td>${escapeHtml(r.label)} ${tag}</td>
+          <td>${s.n}</td>
+          <td class="${s.mean >= 0 ? 'up' : 'down'}">${sPct(s.mean)}</td>
+          <td>${pctOnly(s.winRate)}</td>
+          <td class="up">${sPct(s.avgWin)}</td>
+          <td class="down">${sPct(s.avgLoss)}</td>
+          <td class="down">${sPct(s.worst)}</td>
+          <td>${s.std.toFixed(1)}%</td>
+          <td><b>${s.score.toFixed(3)}</b></td>
+        </tr>`;
+    })
+    .join('');
+
+  out.innerHTML = `
+    <div class="universe-note">
+      Backtested <b>${data.tested}</b> patterns across <b>${escapeHtml(data.universe)}</b> ·
+      <b>${data.qualified}</b> qualified (≥${data.minSample} occurrences, positive expectancy) ·
+      <b>${data.appliedCount}</b> applied to the AI Trader.
+      ${data.appliedCount ? ' <a data-goto="trader" style="color:var(--accent);cursor:pointer;text-decoration:underline">See them on the AI Trader →</a>' : ''}
+    </div>
+    <div class="result-block">
+      <h3>Pattern leaderboard <span class="ev-hint">— ranked by reward ÷ risk (score)</span></h3>
+      <div style="overflow-x:auto"><table class="h-table">
+        <thead><tr>
+          <th>#</th><th>Pattern</th><th>Occurrences</th><th>Expected</th><th>Win rate</th>
+          <th>Avg win</th><th>Avg loss</th><th>Worst</th><th>Risk (σ)</th><th>Score ★</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>
+    <div class="disclaimer-sm">
+      Score = average forward return ÷ its volatility (Sharpe-like). Applied patterns trade on the
+      shared paper account <b>going forward</b> — they don't back-fill history. Backtest over
+      historical data; past behavior does not predict future results.
+    </div>`;
+
+  // let "See them on the AI Trader" work
+  out.querySelector('[data-goto]')?.addEventListener('click', (e) => setView(e.target.dataset.goto));
 }
 
 function boot() {

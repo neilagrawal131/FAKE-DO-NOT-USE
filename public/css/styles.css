@@ -471,6 +471,20 @@ input { font-family: inherit; }
 .badge-open { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 10px; background: rgba(56,189,248,0.15); color: var(--accent); }
 .badge-closed { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; padding: 1px 7px; border-radius: 10px; background: var(--bg-elev-2); color: var(--text-faint); }
 
+/* ---------- AI Strategist ---------- */
+.strat-controls { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+.strat-controls .field { margin-bottom: 0; }
+.strat-controls select, .strat-controls input {
+  padding: 10px 12px; background: var(--bg); border: 1px solid var(--border-strong);
+  border-radius: 9px; color: var(--text); font-size: 14px; outline: none;
+}
+.strat-controls select { min-width: 220px; }
+.strat-controls input { width: 90px; }
+.strat-controls .btn-primary { width: auto; padding: 11px 20px; }
+.h-table tr.applied { background: rgba(38, 166, 154, 0.10); }
+.applied-tag { font-weight: 800; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: rgba(38,166,154,0.2); color: var(--up); }
+.active-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: var(--bg-elev-2); color: var(--text-faint); }
+
 /* modal */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.62);

@@ -30,6 +30,12 @@ rail:
   every active pattern with its win rate and P/L, and the full trade log. Toggle a
   pattern off or remove it and its open positions are liquidated.
 
+- **🧠 AI Strategist** — backtests a library of market patterns across a universe,
+  scores each by **reward vs risk** (average forward return ÷ its volatility, a
+  Sharpe-like score), ranks them on a leaderboard, and **auto-applies the best
+  ones to your paper portfolio** by promoting them into the AI Trader. Only
+  patterns with enough occurrences and positive expectancy qualify.
+
 No real money, no brokerage account, no API keys.
 
 ![Trade workspace](docs/screenshot.png)

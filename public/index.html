@@ -26,6 +26,9 @@
         <button class="rail-item" data-view="trader">
           <span class="rail-ic">🦾</span><span class="rail-label">AI Trader</span>
         </button>
+        <button class="rail-item" data-view="strategist">
+          <span class="rail-ic">🧠</span><span class="rail-label">AI Strategist</span>
+        </button>
         <div class="rail-foot" id="rail-source"></div>
       </nav>
 
@@ -213,6 +216,41 @@
               <h3>Trade log <span class="ev-hint">— every trade the bot has made</span></h3>
               <div id="trader-trades"></div>
             </div>
+          </div>
+        </section>
+
+        <!-- ================= AI STRATEGIST VIEW ================= -->
+        <section class="view" id="view-strategist" hidden>
+          <div class="analyst">
+            <header class="analyst-head">
+              <h1>🧠 AI Strategist</h1>
+              <p>
+                Backtests a library of market patterns across a universe, scores each by
+                <b>reward vs risk</b> (average forward return ÷ its volatility), and
+                <b>auto-applies the best ones to your paper portfolio</b> — they’re handed to
+                the AI Trader, which trades them on your shared account going forward.
+              </p>
+            </header>
+
+            <div class="card query-card">
+              <div class="strat-controls">
+                <label class="field">
+                  <span>Universe</span>
+                  <select id="strat-universe"></select>
+                </label>
+                <label class="field">
+                  <span>Auto-apply top</span>
+                  <input id="strat-topk" type="number" min="1" max="6" value="3" />
+                </label>
+                <button class="btn-primary" id="run-strategist">Backtest &amp; apply best</button>
+              </div>
+              <div class="query-hint">
+                Ranks by a Sharpe-like score (higher reward, lower risk). Only patterns with
+                enough occurrences and positive expectancy are applied.
+              </div>
+            </div>
+
+            <div id="strategist-results"></div>
           </div>
         </section>
       </div>
