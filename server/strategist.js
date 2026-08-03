@@ -18,7 +18,7 @@
 
 import { runBacktest } from './backtest.js';
 import { normalizeScenario } from './scenario.js';
-import { SECTORS, sectorLabel } from './universe.js';
+import { TARGET_SECTORS, sectorLabel } from './universe.js';
 import * as aitrader from './aitrader.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -42,7 +42,7 @@ const MIN_SCORE = 0; // a gene must beat this reward/risk score to qualify
 // shared account's capital spreads across the whole (larger) roster.
 const STRAT_TRADE = Number(process.env.STRATEGIST_TRADE_USD) || 2500;
 
-const UNIVERSES = Object.keys(SECTORS); // rotate through every sector
+const UNIVERSES = TARGET_SECTORS; // rotate through every sector that has a diversification target
 
 // Scale-free seed patterns (no absolute price/volume thresholds) — the starting
 // genome the strategist mutates from. Each is a gene: conditions + horizon.

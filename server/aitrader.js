@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectSignals, liveTriggers } from './backtest.js';
 import { describeScenario } from './scenario.js';
-import { sectorLabel } from './universe.js';
+import { sectorLabel, symbolSector, sectorTarget, SECTOR_TARGETS } from './universe.js';
 import * as portfolio from './portfolio.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -220,6 +220,45 @@ async function runEvaluate(provider) {
   const openStratIds = new Set(Object.values(s.trades).filter((t) => t.status === 'open').map((t) => t.strategyId));
   const scan = s.strategies.filter((x) => x.enabled || openStratIds.has(x.id));
 
+  // ---- diversification budget ------------------------------------------------
+  // Keep the AI's deployed capital within the target weight for each sector. We
+  // measure current exposure at market value, attribute every held symbol to one
+  // canonical sector, and only allow a buy up to (target% x equity) for its
+  // sector — sizing the order down to whatever room is left.
+  const acct = portfolio.getState();
+  const heldSyms = Object.keys(acct.positions);
+  const priceOf = {};
+  await Promise.all(
+    heldSyms.map(async (sym) => {
+      try {
+        priceOf[sym] = (await provider.lastPrice(sym)).price || acct.positions[sym].avgCost;
+      } catch {
+        priceOf[sym] = acct.positions[sym].avgCost;
+      }
+    })
+  );
+  let equity = acct.cash;
+  const exposure = {}; // sectorKey -> market value currently held
+  for (const [sym, pos] of Object.entries(acct.positions)) {
+    const mv = pos.shares * (priceOf[sym] || pos.avgCost);
+    equity += mv;
+    const sec = symbolSector(sym);
+    if (sec) exposure[sec] = (exposure[sec] || 0) + mv;
+  }
+  // Shares of `symbol` we may buy at `price` without breaching its sector cap.
+  const fitShares = (symbol, price, desiredAmount) => {
+    const sec = symbolSector(symbol);
+    const target = sec ? sectorTarget(sec) : null;
+    if (target == null) return Math.floor(desiredAmount / price); // no target: cash-limited only
+    const room = target * equity - (exposure[sec] || 0);
+    if (room <= 0) return 0;
+    return Math.floor(Math.min(desiredAmount, room) / price);
+  };
+  const noteBuy = (symbol, shares, price) => {
+    const sec = symbolSector(symbol);
+    if (sec) exposure[sec] = (exposure[sec] || 0) + shares * price;
+  };
+
   // Collect forward-only signals per scanned strategy, and index them by id so
   // exits can be looked up as new horizon bars appear.
   const sigByStrat = {};
@@ -268,12 +307,14 @@ async function runEvaluate(provider) {
     const price = g.entryPrice;
     if (!(price > 0)) continue;
     if (openTrades().some((t) => t.strategyId === strat.id && t.symbol === g.symbol)) continue;
-    const shares = Math.max(1, Math.floor((strat.tradeAmount || DEFAULT_TRADE) / price));
+    const shares = fitShares(g.symbol, price, strat.tradeAmount || DEFAULT_TRADE);
+    if (shares < 1) continue; // sector already at its target weight — stay diversified
     try {
       portfolio.trade({ side: 'buy', symbol: g.symbol, shares, price, ts: g.time, source: 'ai', strategyId: strat.id, strategyName: strat.name });
     } catch {
       continue; // insufficient cash — leave unmarked so it can retry later
     }
+    noteBuy(g.symbol, shares, price);
     s.entries[id] = shares;
     s.trades[id] = {
       id, strategyId: strat.id, strategyName: strat.name, symbol: g.symbol, shares,
@@ -304,13 +345,15 @@ async function runEvaluate(provider) {
       if (openTrades().some((o) => o.strategyId === strat.id && o.symbol === t.symbol)) continue;
       const price = t.entryPrice;
       if (!(price > 0)) continue;
-      const shares = Math.max(1, Math.floor((strat.tradeAmount || DEFAULT_TRADE) / price));
+      const shares = fitShares(t.symbol, price, strat.tradeAmount || DEFAULT_TRADE);
+      if (shares < 1) continue; // sector already at its target weight — stay diversified
       const now = Math.floor(Date.now() / 1000);
       try {
         portfolio.trade({ side: 'buy', symbol: t.symbol, shares, price, ts: now, source: 'ai', strategyId: strat.id, strategyName: strat.name });
       } catch {
         continue; // insufficient cash — retry on a later tick
       }
+      noteBuy(t.symbol, shares, price);
       s.entries[id] = shares;
       s.trades[id] = {
         id, strategyId: strat.id, strategyName: strat.name, symbol: t.symbol, shares,
@@ -384,6 +427,39 @@ export async function view(provider) {
 
   const sorted = trades.sort((a, b) => (b.entryTime || 0) - (a.entryTime || 0));
 
+  // ---- portfolio diversification: current sector weights vs targets ----------
+  const acct = portfolio.getState();
+  const heldPrice = {};
+  await Promise.all(
+    Object.keys(acct.positions).map(async (sym) => {
+      if (priceMap[sym] != null) { heldPrice[sym] = priceMap[sym]; return; }
+      try { heldPrice[sym] = (await provider.lastPrice(sym)).price || acct.positions[sym].avgCost; }
+      catch { heldPrice[sym] = acct.positions[sym].avgCost; }
+    })
+  );
+  let equity = acct.cash;
+  const secMV = {};
+  for (const [sym, pos] of Object.entries(acct.positions)) {
+    const mv = pos.shares * (heldPrice[sym] || pos.avgCost);
+    equity += mv;
+    const sec = symbolSector(sym) || 'other';
+    secMV[sec] = (secMV[sec] || 0) + mv;
+  }
+  const allocation = Object.entries(SECTOR_TARGETS).map(([key, target]) => ({
+    sector: key,
+    label: sectorLabel(key),
+    target: +(target * 100).toFixed(1),
+    value: secMV[key] || 0,
+    pct: equity > 0 ? +(((secMV[key] || 0) / equity) * 100).toFixed(1) : 0,
+  }));
+  const investedValue = allocation.reduce((a, x) => a + x.value, 0) + (secMV.other || 0);
+  const diversification = {
+    equity,
+    cashPct: equity > 0 ? +((acct.cash / equity) * 100).toFixed(1) : 0,
+    investedPct: equity > 0 ? +((investedValue / equity) * 100).toFixed(1) : 0,
+    sectors: allocation,
+  };
+
   return {
     ai: {
       totalTrades: trades.length,
@@ -392,6 +468,7 @@ export async function view(provider) {
       realizedPnL: aiRealized,
       openPnL: openPnl,
     },
+    diversification,
     strategies: s.strategies.map((strat) => ({
       id: strat.id,
       name: strat.name,

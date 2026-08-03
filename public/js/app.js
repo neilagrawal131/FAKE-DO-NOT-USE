@@ -1071,6 +1071,32 @@ async function refreshTrader() {
   }
 }
 
+function renderAllocation(d) {
+  const el = $('#trader-allocation');
+  if (!el) return;
+  if (!d || !d.sectors) { el.innerHTML = ''; return; }
+  const rows = d.sectors
+    .map((s) => {
+      const over = s.pct > s.target + 0.5;
+      const fillPct = s.target > 0 ? Math.min(100, (s.pct / s.target) * 100) : 0;
+      return `
+      <div class="alloc-row">
+        <div class="alloc-name">${escapeHtml(s.label)}</div>
+        <div class="alloc-bar"><div class="alloc-fill ${over ? 'over' : ''}" style="width:${fillPct}%"></div>
+          <div class="alloc-target" style="left:100%" title="target ${s.target}%"></div></div>
+        <div class="alloc-nums"><b class="${over ? 'down' : ''}">${s.pct}%</b> <span class="alloc-t">/ ${s.target}%</span></div>
+      </div>`;
+    })
+    .join('');
+  el.innerHTML = `
+    <div class="alloc-head">
+      <span>Invested <b>${d.investedPct}%</b></span>
+      <span>Cash <b>${d.cashPct}%</b></span>
+      <span class="ev-hint">bar fills to its sector target; over-target turns red</span>
+    </div>
+    <div class="alloc-list">${rows}</div>`;
+}
+
 function renderTrader(data) {
   const a = data.account; // shared paper account
   const ai = data.ai || { totalTrades: 0, openTrades: 0, closedTrades: 0, realizedPnL: 0 };
@@ -1083,6 +1109,9 @@ function renderTrader(data) {
       <div class="tile-sub">from closed bot trades</div></div>
     <div class="tile"><div class="tile-label">AI trades</div><div class="tile-value" style="font-size:16px">${ai.totalTrades}</div>
       <div class="tile-sub">${ai.openTrades} open · ${ai.closedTrades} closed</div></div>`;
+
+  // diversification vs targets
+  renderAllocation(data.diversification);
 
   // strategies
   const sEl = $('#trader-strategies');

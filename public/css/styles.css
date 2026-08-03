@@ -485,6 +485,18 @@ input { font-family: inherit; }
 .applied-tag { font-weight: 800; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: rgba(38,166,154,0.2); color: var(--up); }
 .active-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: var(--bg-elev-2); color: var(--text-faint); }
 
+/* diversification allocation panel */
+.alloc-head { display: flex; gap: 18px; align-items: center; margin-bottom: 10px; font-size: 13px; color: var(--text-dim); }
+.alloc-list { display: flex; flex-direction: column; gap: 7px; }
+.alloc-row { display: grid; grid-template-columns: 160px 1fr 90px; align-items: center; gap: 12px; }
+.alloc-name { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.alloc-bar { position: relative; height: 12px; background: var(--bg-elev-2); border-radius: 6px; overflow: visible; }
+.alloc-fill { height: 100%; background: var(--accent, #4c8dff); border-radius: 6px; transition: width 0.4s ease; }
+.alloc-fill.over { background: var(--down); }
+.alloc-target { position: absolute; top: -2px; width: 2px; height: 16px; background: var(--text-faint); transform: translateX(-1px); }
+.alloc-nums { font-size: 12px; text-align: right; white-space: nowrap; }
+.alloc-nums .alloc-t { color: var(--text-faint); }
+
 /* autonomous strategist dashboard */
 .auto-badge {
   font-size: 12px; font-weight: 700; letter-spacing: 0.3px; vertical-align: middle;

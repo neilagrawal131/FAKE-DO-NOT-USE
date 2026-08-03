@@ -48,12 +48,58 @@ export const SECTORS = {
     aliases: ['communication', 'communications', 'media', 'telecom', 'telecommunications', 'entertainment'],
     symbols: ['GOOGL', 'META', 'NFLX', 'DIS', 'CMCSA', 'T', 'VZ', 'TMUS', 'CHTR', 'WBD', 'EA', 'TTWO', 'OMC', 'PARA', 'FOXA', 'LYV', 'MTCH', 'PINS', 'SNAP', 'ROKU'],
   },
+  utilities: {
+    label: 'Utilities',
+    aliases: ['utility', 'utilities', 'power', 'electric', 'electricity', 'water utility'],
+    symbols: ['NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'SRE', 'XEL', 'ED', 'WEC', 'ES', 'PEG', 'AEE', 'DTE', 'PPL', 'FE', 'ETR', 'EIX', 'AWK', 'CMS'],
+  },
   market: {
     label: 'Broad market (large caps)',
     aliases: ['broad market', 'overall market', 'whole market', 's&p', 'sp500', 'all sectors', 'large cap', 'large caps'],
     symbols: ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'JPM', 'XOM', 'JNJ', 'V', 'PG', 'HD', 'BAC', 'KO', 'DIS', 'CVX', 'MRK', 'WMT', 'CAT', 'BA', 'AMD', 'NFLX', 'COST'],
   },
 };
+
+// ---- target portfolio diversification ----------------------------------------
+// Desired share of the portfolio per sector (the AI Trader keeps its deployed
+// capital within these caps). Weights sum to 1.0. Keys are SECTORS keys.
+export const SECTOR_TARGETS = {
+  technology: 0.25,     // highest liquidity, strong intraday movement
+  consumer: 0.15,       // Consumer Discretionary — high volatility (TSLA/AMZN-type)
+  financials: 0.12,     // different macro drivers, good liquidity
+  biotech: 0.1,         // Health Care — defensive + news-driven
+  industrials: 0.1,     // economic-cycle exposure
+  energy: 0.08,         // commodity-driven volatility
+  communication: 0.08,  // large liquid names, catalysts
+  semiconductors: 0.07, // high volatility, correlated with tech
+  staples: 0.03,        // low volatility, diversification
+  utilities: 0.02,      // defensive hedge
+};
+
+// Every sector that carries a diversification target (excludes the overlapping
+// "market" universe). Used as the AI Strategist's exploration universe so every
+// pattern it trades maps to a target bucket.
+export const TARGET_SECTORS = Object.keys(SECTOR_TARGETS);
+
+// Canonical single sector for a symbol, resolving universe overlaps by priority
+// (e.g. GOOGL/META -> communication, NVDA -> semiconductors, AAPL -> technology)
+// so portfolio exposure can be attributed to exactly one target bucket.
+const SECTOR_PRIORITY = ['semiconductors', 'biotech', 'energy', 'financials', 'industrials', 'utilities', 'staples', 'consumer', 'communication', 'technology'];
+const SYMBOL_SECTOR = (() => {
+  const m = {};
+  for (const key of SECTOR_PRIORITY) {
+    for (const sym of SECTORS[key]?.symbols || []) {
+      if (!(sym in m)) m[sym] = key;
+    }
+  }
+  return m;
+})();
+export function symbolSector(symbol) {
+  return SYMBOL_SECTOR[String(symbol || '').toUpperCase()] || null;
+}
+export function sectorTarget(key) {
+  return SECTOR_TARGETS[key] ?? null;
+}
 
 // Match a free-text fragment to a sector key. Returns null if nothing matches.
 export function resolveSector(text) {
