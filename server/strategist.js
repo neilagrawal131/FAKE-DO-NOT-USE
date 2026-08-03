@@ -29,7 +29,7 @@ const DATA_DIR = join(root, 'data');
 const FILE = join(DATA_DIR, 'strategist.json');
 
 // --- tunables (env-overridable) ------------------------------------------------
-const TICK_MS = Number(process.env.STRATEGIST_TICK_MS) || 5000; // one generation + trade tick
+const TICK_MS = Number(process.env.STRATEGIST_TICK_MS) || 10000; // one generation + trade tick (matches the 10s data cache)
 const LOOKBACK_DAYS = 365; // history each scoring backtest sees
 const MIN_SAMPLE = 15; // ignore patterns with too few occurrences to trust
 const TARGET_ROSTER = Number(process.env.STRATEGIST_ROSTER) || 12; // how many patterns live at once

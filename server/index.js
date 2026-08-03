@@ -40,10 +40,44 @@ function withFallback(primary, backup) {
   };
 }
 
+// Global rate cap: pull any given piece of market data from the upstream
+// provider at most once every MARKET_CACHE_MS (default 10s). This bounds how hard
+// the whole platform (the autonomous Strategist's continuous backtests, portfolio
+// marking, the UI) hits Polygon — no matter how often those callers ask, each
+// distinct request is served from this cache for the window. In-flight requests
+// are shared so bursts collapse to one call; errors are not cached.
+const MARKET_CACHE_MS = Number(process.env.MARKET_CACHE_MS) || 10_000;
+function cachedProvider(p, ttlMs) {
+  const store = new Map(); // key -> { promise, expires }
+  const memo = (name) => (...args) => {
+    const key = `${name}|${args.join('|')}`;
+    const now = Date.now();
+    const hit = store.get(key);
+    if (hit && hit.expires > now) return hit.promise;
+    const promise = Promise.resolve().then(() => p[name](...args));
+    store.set(key, { promise, expires: now + ttlMs });
+    promise.catch(() => {
+      const h = store.get(key);
+      if (h && h.promise === promise) store.delete(key); // don't cache failures
+    });
+    return promise;
+  };
+  return {
+    chart: memo('chart'),
+    quote: memo('quote'),
+    lastPrice: memo('lastPrice'),
+    search: memo('search'),
+    INTRADAY_MAX_DAYS: p.INTRADAY_MAX_DAYS,
+  };
+}
+
 let yahoo; // the active provider (name kept for minimal churn)
 if (SOURCE === 'mock') yahoo = mockProvider;
 else if (SOURCE === 'polygon') yahoo = withFallback(polygonProvider, yahooProvider);
 else yahoo = yahooProvider;
+
+// Wrap the live sources in the 10s cache (mock is instant/deterministic — no need).
+if (SOURCE !== 'mock') yahoo = cachedProvider(yahoo, MARKET_CACHE_MS);
 
 // Tell the parser how far back intraday analysis can go for this data source.
 setIntradayMaxDays(yahoo.INTRADAY_MAX_DAYS ?? 30);
