@@ -107,7 +107,7 @@ export function strategies() {
 // `liveEntry` patterns also open a position immediately whenever the pattern is
 // triggering on the current bar (used by the autonomous Strategist so it trades
 // as soon as a pattern is live, instead of waiting for a brand-new trigger bar).
-export function addStrategy(scenario, name, owner = 'user', liveEntry = false) {
+export function addStrategy(scenario, name, owner = 'user', liveEntry = false, tradeAmount = DEFAULT_TRADE) {
   const s = load();
   if (hasStrategy(scenario)) return false;
   seq += 1;
@@ -118,7 +118,7 @@ export function addStrategy(scenario, name, owner = 'user', liveEntry = false) {
     enabled: true,
     owner,
     liveEntry,
-    tradeAmount: DEFAULT_TRADE,
+    tradeAmount: tradeAmount || DEFAULT_TRADE,
     createdAt: Math.floor(Date.now() / 1000),
   });
   persist();

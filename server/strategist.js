@@ -32,12 +32,15 @@ const FILE = join(DATA_DIR, 'strategist.json');
 const TICK_MS = Number(process.env.STRATEGIST_TICK_MS) || 5000; // one generation + trade tick
 const LOOKBACK_DAYS = 365; // history each scoring backtest sees
 const MIN_SAMPLE = 15; // ignore patterns with too few occurrences to trust
-const TARGET_ROSTER = Number(process.env.STRATEGIST_ROSTER) || 4; // how many live at once
+const TARGET_ROSTER = Number(process.env.STRATEGIST_ROSTER) || 12; // how many patterns live at once
 const POOL_MAX = 48; // cap the gene pool so exploration stays bounded
 const LOG_MAX = 80; // decision-log entries kept
 const BATCH_SEEDS = 3; // fresh seed genes tested per generation
 const BATCH_MUTANTS = 4; // mutations of current leaders tested per generation
 const MIN_SCORE = 0; // a gene must beat this reward/risk score to qualify
+// Position size per promoted pattern — smaller than the manual default so the
+// shared account's capital spreads across the whole (larger) roster.
+const STRAT_TRADE = Number(process.env.STRATEGIST_TRADE_USD) || 2500;
 
 const UNIVERSES = Object.keys(SECTORS); // rotate through every sector
 
@@ -318,7 +321,7 @@ async function reconcile() {
   for (const e of desired) {
     const sig = scenarioSig(e.scenario);
     if (ownedSigs.has(sig)) continue;
-    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true);
+    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true, STRAT_TRADE);
     if (added) logEvent('promote', e.label, `promoted to live trading — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
   }
 }
@@ -373,7 +376,7 @@ export function getState() {
   const leaderboard = Object.values(s.pool)
     .filter((e) => e.stats)
     .sort((a, b) => (qualifies(b) - qualifies(a)) || scoreOf(b) - scoreOf(a))
-    .slice(0, 12)
+    .slice(0, Math.max(20, TARGET_ROSTER + 6))
     .map((e) => ({
       label: e.label,
       sector: sectorLabel(e.gene.sectorKey),

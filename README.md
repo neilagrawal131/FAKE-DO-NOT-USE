@@ -100,7 +100,8 @@ DATA_SOURCE=mock npm start
 | `POLYGON_API_KEY` | —                  | Polygon.io key (put it in `.env`). Enables real quotes + deep history. |
 | `POLYGON_INTRADAY_MAX_DAYS` | `730`    | How far back your Polygon plan serves 30-min intraday.       |
 | `STRATEGIST_TICK_MS` | `5000`          | How often the autonomous AI Strategist runs a discover/improve/trade cycle. |
-| `STRATEGIST_ROSTER` | `4`              | How many patterns the AI Strategist keeps trading live at once. |
+| `STRATEGIST_ROSTER` | `12`             | How many patterns the AI Strategist keeps trading live at once. |
+| `STRATEGIST_TRADE_USD` | `2500`        | Dollars the AI Strategist commits per position (spreads capital across the roster). |
 
 ### Market-data providers
 
