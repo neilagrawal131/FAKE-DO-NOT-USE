@@ -106,8 +106,8 @@ DATA_SOURCE=mock npm start
 | `STRATEGIST_MIN_SAMPLE` | `60`         | Minimum historical occurrences for a pattern to qualify — enforces COMMON, frequently-triggering patterns. |
 | `STRATEGIST_MIN_SCORE` | `0.03`        | Minimum reward/risk score to qualify — a profitability floor (positive expectancy per unit of risk). |
 | `STRATEGIST_POOL` | `300`             | How many patterns the Strategist explores/keeps in its search pool. |
-| `SIZE_MIN_PCT` | `0.0008`             | Baseline order size as a fraction of account equity (0.08%). |
-| `SIZE_MAX_PCT` | `0.004`              | Hard per-order cap as a fraction of equity (0.4%). Orders scale from baseline up to this with trade strength. |
+| `SIZE_MIN_PCT` | `0.004`              | Baseline order size as a fraction of account equity (0.4%). |
+| `SIZE_MAX_PCT` | `0.02`               | Hard per-order cap as a fraction of equity (2%). Orders scale from baseline up to this with trade strength. |
 | `SIZE_SYMBOL_CAP_PCT` | `0.04`        | Max total position in any one stock, as a fraction of equity (4%). |
 | `SIZE_STRONG_SCORE` | `0.25`          | Reward/risk score at which an order is sized to the max. |
 

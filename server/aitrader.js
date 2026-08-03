@@ -25,8 +25,8 @@ const DEFAULT_TRADE = 5_000; // dollars committed per signal (manual patterns)
 const MAX_SIGNALS_PER_STRATEGY = 60;
 
 // --- position sizing policy (all fractions of total account equity) -----------
-const SIZE_MIN_PCT = Number(process.env.SIZE_MIN_PCT) || 0.0008; // 0.08% — typical / baseline order
-const SIZE_MAX_PCT = Number(process.env.SIZE_MAX_PCT) || 0.004; //  0.4% — hard per-ORDER cap
+const SIZE_MIN_PCT = Number(process.env.SIZE_MIN_PCT) || 0.004; // 0.4% — typical / baseline order
+const SIZE_MAX_PCT = Number(process.env.SIZE_MAX_PCT) || 0.02; //  2.0% — hard per-ORDER cap
 const SIZE_SYMBOL_CAP_PCT = Number(process.env.SIZE_SYMBOL_CAP_PCT) || 0.04; // 4% — max total position in one stock
 const SIZE_STRONG_SCORE = Number(process.env.SIZE_STRONG_SCORE) || 0.25; // reward/risk score that sizes an order to the max
 const SIZE_BASE_SCORE = 0.03; // score at/below which an order is the baseline size
