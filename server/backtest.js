@@ -123,6 +123,89 @@ function maKey(c) {
   return `${c.maType}:${c.period}`;
 }
 
+// --- entry filter & exit rules (shared by live trading and pattern scoring) ----
+// Enter LOWER: only take a signal on a pullback (price in the lower part of its
+// recent range) and never when it's stretched far above its short MA.
+export const ENTRY = {
+  maPeriod: Number(process.env.ENTRY_MA_PERIOD) || 20,
+  rangeLookback: Number(process.env.ENTRY_RANGE_LOOKBACK) || 20,
+  dipMax: Number(process.env.ENTRY_DIP_MAX) || 0.5, // must sit in the lower 50% of the range
+  extAbove: Number(process.env.ENTRY_EXT_ABOVE) || 0.08, // skip if > 8% above the short MA
+};
+// Sell HIGHER: profit target, or a trailing stop once in profit, or a stop-loss,
+// or the pattern's time horizon as a backstop — whichever comes first.
+export const EXIT = {
+  targetPct: Number(process.env.EXIT_TARGET_PCT) || 0.08,
+  stopPct: Number(process.env.EXIT_STOP_PCT) || 0.05,
+  trailPct: Number(process.env.EXIT_TRAIL_PCT) || 0.03,
+  trailArm: Number(process.env.EXIT_TRAIL_ARM) || 0.04, // arm the trail after +4% at peak
+};
+
+// Is bar i a good (low) entry: a pullback within range, not extended above the MA?
+function entryOk(bars, i, shortMA) {
+  if (i < ENTRY.rangeLookback) return true;
+  let hi = -Infinity;
+  let lo = Infinity;
+  for (let k = i - ENTRY.rangeLookback + 1; k <= i; k++) {
+    if (bars[k].high > hi) hi = bars[k].high;
+    if (bars[k].low < lo) lo = bars[k].low;
+  }
+  const span = hi - lo;
+  const pos = span > 0 ? (bars[i].close - lo) / span : 0;
+  if (pos > ENTRY.dipMax) return false; // upper part of the range — not a dip
+  const ma = shortMA[i];
+  if (ma != null && bars[i].close > ma * (1 + ENTRY.extAbove)) return false; // extended
+  return true;
+}
+
+// Simulate the target/trailing/stop/time exit from an entry bar, returning the
+// realized % return (uses intrabar high/low, stop checked first = conservative).
+function simulateExit(bars, entryIdx, horizon) {
+  const entry = bars[entryIdx].close;
+  const maxJ = Math.min(bars.length - 1, entryIdx + Math.max(1, horizon));
+  let peak = entry;
+  for (let j = entryIdx + 1; j <= maxJ; j++) {
+    const b = bars[j];
+    if (b.low <= entry * (1 - EXIT.stopPct)) return ((entry * (1 - EXIT.stopPct) - entry) / entry) * 100;
+    if (b.high >= entry * (1 + EXIT.targetPct)) return ((entry * (1 + EXIT.targetPct) - entry) / entry) * 100;
+    if (b.high > peak) peak = b.high;
+    if (peak >= entry * (1 + EXIT.trailArm) && b.close <= peak * (1 - EXIT.trailPct)) return ((b.close - entry) / entry) * 100;
+  }
+  return ((bars[maxJ].close - entry) / entry) * 100; // time backstop
+}
+
+// Score a pattern the way it actually TRADES: only dip entries, exited by the
+// target/trailing/stop/time rules. Returns realized returns + coverage.
+export async function simulatePattern(scenario, provider) {
+  const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
+  const intraday = scenario.timeframe === 'intraday';
+  const interval = intraday ? '30m' : '1d';
+  const range = intraday ? intradayRange(scenario.lookbackDays) : fetchRange(scenario.lookbackDays);
+  const cutoff = Math.floor(Date.now() / 1000) - scenario.lookbackDays * 86400;
+  const H = scenario.primaryHorizon;
+  const maDefs = scenario.conditions
+    .filter((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')
+    .map((c) => ({ key: maKey(c), period: c.period, type: c.maType }));
+
+  const per = await mapLimit(symbols, 6, async (sym) => {
+    const bars = cleanBars(await provider.chart(sym, range, interval));
+    if (bars.length < 30) return null;
+    const maCache = new Map();
+    for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
+    const shortMA = movingAverage(bars, ENTRY.maPeriod, 'sma');
+    const rets = [];
+    for (let i = 1; i < bars.length - 1; i++) {
+      if (bars[i].time < cutoff) continue;
+      if (!conditionsMet(scenario.conditions, bars, maCache, i)) continue;
+      if (!entryOk(bars, i, shortMA)) continue;
+      rets.push(simulateExit(bars, i, H));
+    }
+    return rets;
+  });
+  const withData = per.filter(Boolean);
+  return { returns: withData.flat(), symbolsWithData: withData.length };
+}
+
 // Defend against malformed provider output: drop null/invalid bars (a single bad
 // element would otherwise crash every scan with "reading 'time' of null"), and
 // guarantee bars are in ascending time order.
@@ -264,8 +347,10 @@ export async function liveTriggers(scenario, provider) {
     if (bars.length < 30) return null;
     const maCache = new Map();
     for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
+    const shortMA = movingAverage(bars, ENTRY.maPeriod, 'sma');
     const last = bars.length - 1;
     if (!activeNow(scenario.conditions, bars, maCache, last, FRESH)) return null;
+    if (!entryOk(bars, last, shortMA)) return null; // only enter on a pullback, never extended
     return {
       symbol: sym,
       barTime: bars[last].time, // dedup key: re-enter only when a new bar forms

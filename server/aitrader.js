@@ -12,7 +12,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { saveJSON, loadJSON } from './store.js';
-import { collectSignals, liveTriggers } from './backtest.js';
+import { collectSignals, liveTriggers, EXIT } from './backtest.js';
 import { describeScenario } from './scenario.js';
 import { sectorLabel, symbolSector, sectorTarget, SECTOR_TARGETS } from './universe.js';
 import * as portfolio from './portfolio.js';
@@ -196,7 +196,7 @@ async function liquidateStrategy(id, provider) {
   }
 }
 
-function sellOut(trade, price, ts) {
+function sellOut(trade, price, ts, reason = null) {
   const s = load();
   try {
     portfolio.trade({ side: 'sell', symbol: trade.symbol, shares: trade.shares, price, ts, source: 'ai', strategyId: trade.strategyId, strategyName: trade.strategyName });
@@ -205,6 +205,7 @@ function sellOut(trade, price, ts) {
   }
   s.exits[trade.id] = true;
   trade.status = 'closed';
+  trade.exitReason = reason; // target | trail | stop | time | (liquidation)
   trade.exitTime = ts;
   trade.exitDate = fmtTime(ts, trade.intraday);
   trade.exitPrice = price;
@@ -401,25 +402,34 @@ async function runEvaluate(provider) {
       s.entries[id] = shares;
       s.trades[id] = {
         id, strategyId: strat.id, strategyName: strat.name, symbol: t.symbol, shares,
-        entryTime: now, entryDate: fmtTime(now, intraday), entryPrice: price,
+        entryTime: now, entryDate: fmtTime(now, intraday), entryPrice: price, peak: price,
         exitDueTime: now + holdSeconds, exitDuePrice: null, live: true,
         exitTime: null, exitDate: null, exitPrice: null, status: 'open', pnl: null, pnlPct: null, intraday,
       };
     }
   }
 
-  // Close live positions whose forward horizon has elapsed (wall clock), at the
-  // current market price.
+  // Manage exits for every open live position: sell HIGHER via a profit target
+  // or a trailing stop once in profit, cut losers at the stop-loss, and use the
+  // time horizon only as a backstop — whichever triggers first.
   const nowTs = Math.floor(Date.now() / 1000);
-  const dueLive = openTrades().filter((t) => t.live && t.exitDueTime != null && t.exitDueTime <= nowTs);
-  for (const t of dueLive) {
+  for (const t of openTrades().filter((x) => x.live)) {
     let price = t.entryPrice;
     try {
       price = (await provider.lastPrice(t.symbol)).price || price;
     } catch {
       /* fall back to entry price */
     }
-    sellOut(t, price, nowTs);
+    if (!(price > 0)) continue;
+    t.peak = Math.max(t.peak || t.entryPrice, price);
+    const gain = (price - t.entryPrice) / t.entryPrice;
+    const peakGain = (t.peak - t.entryPrice) / t.entryPrice;
+    let reason = null;
+    if (gain >= EXIT.targetPct) reason = 'target';
+    else if (gain <= -EXIT.stopPct) reason = 'stop';
+    else if (peakGain >= EXIT.trailArm && price <= t.peak * (1 - EXIT.trailPct)) reason = 'trail';
+    else if (t.exitDueTime != null && nowTs >= t.exitDueTime) reason = 'time';
+    if (reason) sellOut(t, price, nowTs, reason);
   }
 
   persist();

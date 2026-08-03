@@ -16,7 +16,7 @@
 // It only ever touches strategies it owns (owner: 'strategist'); patterns the
 // user added by hand in the AI Trader tab are left untouched.
 
-import { runBacktest } from './backtest.js';
+import { simulatePattern } from './backtest.js';
 import { normalizeScenario } from './scenario.js';
 import { TARGET_SECTORS, sectorLabel } from './universe.js';
 import * as aitrader from './aitrader.js';
@@ -33,7 +33,7 @@ const TICK_MS = Number(process.env.STRATEGIST_TICK_MS) || 10000; // one generati
 const LOOKBACK_DAYS = 365; // history each scoring backtest sees
 // Require a LOT of occurrences: we specifically want COMMON, frequently-triggering
 // patterns that will actually be traded, not rare one-offs.
-const MIN_SAMPLE = Number(process.env.STRATEGIST_MIN_SAMPLE) || 60;
+const MIN_SAMPLE = Number(process.env.STRATEGIST_MIN_SAMPLE) || 40;
 const TARGET_ROSTER = Number(process.env.STRATEGIST_ROSTER) || 60; // how many patterns live at once (can be hundreds)
 const RETAIN_MARGIN = Number(process.env.STRATEGIST_RETAIN_MARGIN) || 30; // hysteresis: keep a live pattern until it falls this far past the roster
 const POOL_MAX = Number(process.env.STRATEGIST_POOL) || 300; // explore hundreds of patterns
@@ -197,9 +197,10 @@ const qualifies = (e) => e && e.stats && e.stats.n >= MIN_SAMPLE && e.stats.mean
 
 async function scoreGene(gene) {
   const scenario = geneScenario(gene);
-  const res = await runBacktest(scenario, provider);
-  const rets = res.events.map((ev) => ev.returns[gene.horizon]).filter((r) => r != null);
-  return { stats: summarize(rets), scenario, symbolsScanned: res.universe.symbolsWithData };
+  // Score the pattern the way it actually trades: dip entries + target/trailing/
+  // stop/time exits, so the reward/risk ranking reflects real execution.
+  const { returns, symbolsWithData } = await simulatePattern(scenario, provider);
+  return { stats: summarize(returns), scenario, symbolsScanned: symbolsWithData };
 }
 
 // --- one generation: explore + exploit + score + prune -------------------------

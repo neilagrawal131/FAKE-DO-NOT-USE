@@ -112,6 +112,12 @@ DATA_SOURCE=mock npm start
 | `SIZE_MAX_PCT` | `0.02`               | Hard per-order cap as a fraction of equity (2%). Orders scale from baseline up to this with trade strength. |
 | `SIZE_SYMBOL_CAP_PCT` | `0.04`        | Max total position in any one stock, as a fraction of equity (4%). |
 | `SIZE_STRONG_SCORE` | `0.25`          | Reward/risk score at which an order is sized to the max. |
+| `ENTRY_DIP_MAX` | `0.5`               | Only enter when price sits in the lower this-fraction of its recent range (buy the dip). |
+| `ENTRY_EXT_ABOVE` | `0.08`            | Skip entries when price is more than this fraction above its short MA (don't buy extended). |
+| `EXIT_TARGET_PCT` | `0.08`            | Profit target — sell at +this. |
+| `EXIT_STOP_PCT` | `0.05`              | Stop-loss — sell at −this. |
+| `EXIT_TRAIL_PCT` | `0.03`             | Trailing stop — once in profit, sell if price falls this far from its peak. |
+| `EXIT_TRAIL_ARM` | `0.04`             | Arm the trailing stop only after the position is up this much at its peak. |
 
 ### Market-data providers
 
