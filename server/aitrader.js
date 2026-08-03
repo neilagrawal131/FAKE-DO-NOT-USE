@@ -21,8 +21,28 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA_DIR = join(root, 'data');
 const FILE = join(DATA_DIR, 'aitrader.json');
 
-const DEFAULT_TRADE = 5_000; // dollars committed per signal
+const DEFAULT_TRADE = 5_000; // dollars committed per signal (manual patterns)
 const MAX_SIGNALS_PER_STRATEGY = 60;
+
+// --- position sizing policy (all fractions of total account equity) -----------
+const SIZE_MIN_PCT = Number(process.env.SIZE_MIN_PCT) || 0.0008; // 0.08% — typical / baseline order
+const SIZE_MAX_PCT = Number(process.env.SIZE_MAX_PCT) || 0.004; //  0.4% — hard per-ORDER cap
+const SIZE_SYMBOL_CAP_PCT = Number(process.env.SIZE_SYMBOL_CAP_PCT) || 0.04; // 4% — max total position in one stock
+const SIZE_STRONG_SCORE = Number(process.env.SIZE_STRONG_SCORE) || 0.25; // reward/risk score that sizes an order to the max
+const SIZE_BASE_SCORE = 0.03; // score at/below which an order is the baseline size
+
+// Dollar size for one order given the trade's "strength" (the pattern's
+// reward/risk score): most orders sit near the 0.08% baseline; only strong
+// signals scale up toward the 0.4% cap (squared so the ramp stays gentle).
+function orderDollarsFor(strength, equity) {
+  let s = 0;
+  if (Number.isFinite(strength)) {
+    s = (strength - SIZE_BASE_SCORE) / (SIZE_STRONG_SCORE - SIZE_BASE_SCORE);
+    s = Math.max(0, Math.min(1, s));
+    s = s * s;
+  }
+  return (SIZE_MIN_PCT + (SIZE_MAX_PCT - SIZE_MIN_PCT) * s) * equity;
+}
 
 let state = null;
 let seq = 0;
@@ -107,7 +127,7 @@ export function strategies() {
 // `liveEntry` patterns also open a position immediately whenever the pattern is
 // triggering on the current bar (used by the autonomous Strategist so it trades
 // as soon as a pattern is live, instead of waiting for a brand-new trigger bar).
-export function addStrategy(scenario, name, owner = 'user', liveEntry = false, tradeAmount = DEFAULT_TRADE) {
+export function addStrategy(scenario, name, owner = 'user', liveEntry = false, tradeAmount = DEFAULT_TRADE, strength = null) {
   const s = load();
   if (hasStrategy(scenario)) return false;
   seq += 1;
@@ -119,6 +139,7 @@ export function addStrategy(scenario, name, owner = 'user', liveEntry = false, t
     owner,
     liveEntry,
     tradeAmount: tradeAmount || DEFAULT_TRADE,
+    strength, // reward/risk score — drives strength-scaled position sizing
     createdAt: Math.floor(Date.now() / 1000),
   });
   persist();
@@ -246,24 +267,33 @@ async function runEvaluate(provider) {
   );
   let equity = acct.cash;
   const exposure = {}; // sectorKey -> market value currently held
+  const symExposure = {}; // symbol -> market value currently held
   for (const [sym, pos] of Object.entries(acct.positions)) {
     const mv = pos.shares * (priceOf[sym] || pos.avgCost);
     equity += mv;
+    symExposure[sym] = (symExposure[sym] || 0) + mv;
     const sec = symbolSector(sym);
     if (sec) exposure[sec] = (exposure[sec] || 0) + mv;
   }
-  // Shares of `symbol` we may buy at `price` without breaching its sector cap.
-  const fitShares = (symbol, price, desiredAmount) => {
+  // Shares of `symbol` to buy at `price` for a desired order size, clamped by all
+  // sizing limits: the hard 0.4%/equity per-order cap, the 4%/equity per-stock
+  // cap, and the sector diversification target.
+  const fitShares = (symbol, price, desiredDollars) => {
+    let room = Math.min(desiredDollars, SIZE_MAX_PCT * equity); // per-order cap (0.4%)
+    room = Math.min(room, SIZE_SYMBOL_CAP_PCT * equity - (symExposure[symbol] || 0)); // per-stock cap (4%)
     const sec = symbolSector(symbol);
     const target = sec ? sectorTarget(sec) : null;
-    if (target == null) return Math.floor(desiredAmount / price); // no target: cash-limited only
-    const room = target * equity - (exposure[sec] || 0);
-    if (room <= 0) return 0;
-    return Math.floor(Math.min(desiredAmount, room) / price);
+    if (target != null) room = Math.min(room, target * equity - (exposure[sec] || 0)); // sector cap
+    if (!(room > 1) || !(price > 0)) return 0; // skip sub-$1 dust
+    // Fractional shares, so small (0.08%) percentage orders size exactly regardless
+    // of share price.
+    return Math.round((room / price) * 1e6) / 1e6;
   };
   const noteBuy = (symbol, shares, price) => {
+    const val = shares * price;
+    symExposure[symbol] = (symExposure[symbol] || 0) + val;
     const sec = symbolSector(symbol);
-    if (sec) exposure[sec] = (exposure[sec] || 0) + shares * price;
+    if (sec) exposure[sec] = (exposure[sec] || 0) + val;
   };
 
   // Collect forward-only signals per scanned strategy, and index them by id so
@@ -314,8 +344,9 @@ async function runEvaluate(provider) {
     const price = g.entryPrice;
     if (!(price > 0)) continue;
     if (openTrades().some((t) => t.strategyId === strat.id && t.symbol === g.symbol)) continue;
-    const shares = fitShares(g.symbol, price, strat.tradeAmount || DEFAULT_TRADE);
-    if (shares < 1) continue; // sector already at its target weight — stay diversified
+    const desired = strat.liveEntry ? orderDollarsFor(strat.strength, equity) : strat.tradeAmount || DEFAULT_TRADE;
+    const shares = fitShares(g.symbol, price, desired);
+    if (!(shares > 0)) continue; // sector full or size too small — stay diversified
     try {
       portfolio.trade({ side: 'buy', symbol: g.symbol, shares, price, ts: g.time, source: 'ai', strategyId: strat.id, strategyName: strat.name });
     } catch {
@@ -362,8 +393,9 @@ async function runEvaluate(provider) {
         /* keep bar close */
       }
       if (!(price > 0)) continue;
-      const shares = fitShares(t.symbol, price, strat.tradeAmount || DEFAULT_TRADE);
-      if (shares < 1) continue; // sector already at its target weight — stay diversified
+      // Size by strength of the trade (the pattern's reward/risk score).
+      const shares = fitShares(t.symbol, price, orderDollarsFor(strat.strength, equity));
+      if (!(shares > 0)) continue; // sector full or size too small — stay diversified
       const now = Math.floor(Date.now() / 1000);
       // Schedule the exit relative to ENTRY time so the position is actually held
       // for the horizon (a stale last-bar timestamp must never cause an instant

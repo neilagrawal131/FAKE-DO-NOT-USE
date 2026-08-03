@@ -340,7 +340,7 @@ async function reconcile() {
   for (const e of desired) {
     if (count >= TARGET_ROSTER) break;
     if (liveSigs.has(scenarioSig(e.scenario))) continue;
-    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true, STRAT_TRADE);
+    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true, STRAT_TRADE, e.stats.score);
     if (added) {
       count++;
       logEvent('promote', e.label, `promoted to live trading — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
