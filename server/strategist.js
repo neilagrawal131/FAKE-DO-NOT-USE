@@ -18,7 +18,7 @@
 
 import { simulatePattern } from './backtest.js';
 import { normalizeScenario } from './scenario.js';
-import { TARGET_SECTORS, sectorLabel, sectorTarget } from './universe.js';
+import { TARGET_SECTORS, sectorLabel, sectorTarget, sectorStyle } from './universe.js';
 import * as aitrader from './aitrader.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,11 +74,13 @@ const SEEDS = [
 
 // --- mutation search space -----------------------------------------------------
 const MA_PERIODS = [10, 20, 30, 50, 100, 150, 200];
-const HORIZONS = [1, 2, 3, 5, 10, 20];
 const MOVE_PCTS = [0.5, 1, 1.5, 2, 3]; // small (common) moves
 const FVG_MINPCTS = [null, 0.25, 0.5, 1];
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+// Horizon comes from the sector's trading style: short for volatile sectors
+// (trade the swings), long for stable sectors (hold long-term).
+const pickHorizon = (sec) => pick(sectorStyle(sec).horizons);
 
 // --- state ---------------------------------------------------------------------
 let state = null;
@@ -158,8 +160,8 @@ function mutate(gene) {
   if (c.kind === 'day_change') ops.push('pct', 'dir');
   if (c.kind === 'fvg') ops.push('minPct', 'dir');
   const op = pick(ops);
-  if (op === 'horizon') child.horizon = pick(HORIZONS);
-  else if (op === 'sector') child.sectorKey = pick(UNIVERSES);
+  if (op === 'horizon') child.horizon = pickHorizon(child.sectorKey);
+  else if (op === 'sector') { child.sectorKey = pick(UNIVERSES); child.horizon = pickHorizon(child.sectorKey); } // re-fit horizon to the new sector's style
   else if (op === 'period') c.period = pick(MA_PERIODS);
   else if (op === 'maType') c.maType = c.maType === 'ema' ? 'sma' : 'ema';
   else if (op === 'pct') c.pct = pick(MOVE_PCTS);
@@ -214,7 +216,9 @@ async function runGeneration() {
   const explore = [];
   for (let i = 0; i < BATCH_SEEDS; i++) {
     const seed = SEEDS[(seedStart + i) % SEEDS.length];
-    explore.push({ sectorKey: universe, horizon: seed.horizon, conditions: seed.conditions.map((c) => ({ ...c })) });
+    // Horizon comes from the sector's style (short = volatile, long = stable),
+    // not the seed's default.
+    explore.push({ sectorKey: universe, horizon: pickHorizon(universe), conditions: seed.conditions.map((c) => ({ ...c })) });
   }
 
   // EXPLOIT: mutate the current best pool genes (hill-climbing).
@@ -225,7 +229,9 @@ async function runGeneration() {
     .map((e) => e.gene);
   const exploit = [];
   for (let i = 0; i < BATCH_MUTANTS; i++) {
-    const base = leaders.length ? pick(leaders) : pick(SEEDS.map((seed) => ({ sectorKey: universe, ...seed })));
+    const base = leaders.length
+      ? pick(leaders)
+      : { sectorKey: universe, horizon: pickHorizon(universe), conditions: pick(SEEDS).conditions.map((c) => ({ ...c })) };
     exploit.push(mutate(base));
   }
 

@@ -3,7 +3,7 @@
 // fire, then measures what the stock did over several forward horizons — and
 // aggregates that into "rose X% of the time by Y / fell ...".
 
-import { sectorSymbols, sectorLabel } from './universe.js';
+import { sectorSymbols, sectorLabel, sectorStyle } from './universe.js';
 import { describeScenario } from './scenario.js';
 
 // Pick an upstream fetch range big enough for the lookback + MA warmup + horizon.
@@ -160,16 +160,17 @@ function entryOk(bars, i, shortMA) {
 
 // Simulate the target/trailing/stop/time exit from an entry bar, returning the
 // realized % return (uses intrabar high/low, stop checked first = conservative).
-function simulateExit(bars, entryIdx, horizon) {
+// `ex` = { target, stop, trail, trailArm } for the sector's trading style.
+function simulateExit(bars, entryIdx, horizon, ex) {
   const entry = bars[entryIdx].close;
   const maxJ = Math.min(bars.length - 1, entryIdx + Math.max(1, horizon));
   let peak = entry;
   for (let j = entryIdx + 1; j <= maxJ; j++) {
     const b = bars[j];
-    if (b.low <= entry * (1 - EXIT.stopPct)) return ((entry * (1 - EXIT.stopPct) - entry) / entry) * 100;
-    if (b.high >= entry * (1 + EXIT.targetPct)) return ((entry * (1 + EXIT.targetPct) - entry) / entry) * 100;
+    if (b.low <= entry * (1 - ex.stop)) return ((entry * (1 - ex.stop) - entry) / entry) * 100;
+    if (b.high >= entry * (1 + ex.target)) return ((entry * (1 + ex.target) - entry) / entry) * 100;
     if (b.high > peak) peak = b.high;
-    if (peak >= entry * (1 + EXIT.trailArm) && b.close <= peak * (1 - EXIT.trailPct)) return ((b.close - entry) / entry) * 100;
+    if (peak >= entry * (1 + ex.trailArm) && b.close <= peak * (1 - ex.trail)) return ((b.close - entry) / entry) * 100;
   }
   return ((bars[maxJ].close - entry) / entry) * 100; // time backstop
 }
@@ -183,6 +184,7 @@ export async function simulatePattern(scenario, provider) {
   const range = intraday ? intradayRange(scenario.lookbackDays) : fetchRange(scenario.lookbackDays);
   const cutoff = Math.floor(Date.now() / 1000) - scenario.lookbackDays * 86400;
   const H = scenario.primaryHorizon;
+  const ex = sectorStyle(scenario.sectorKey); // sector's target/stop/trail style
   const maDefs = scenario.conditions
     .filter((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')
     .map((c) => ({ key: maKey(c), period: c.period, type: c.maType }));
@@ -198,7 +200,7 @@ export async function simulatePattern(scenario, provider) {
       if (bars[i].time < cutoff) continue;
       if (!conditionsMet(scenario.conditions, bars, maCache, i)) continue;
       if (!entryOk(bars, i, shortMA)) continue;
-      rets.push(simulateExit(bars, i, H));
+      rets.push(simulateExit(bars, i, H, ex));
     }
     return rets;
   });

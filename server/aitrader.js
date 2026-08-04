@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { saveJSON, loadJSON } from './store.js';
 import { collectSignals, liveTriggers, EXIT } from './backtest.js';
 import { describeScenario } from './scenario.js';
-import { sectorLabel, symbolSector, sectorTarget, SECTOR_TARGETS } from './universe.js';
+import { sectorLabel, symbolSector, sectorTarget, sectorStyle, SECTOR_TARGETS } from './universe.js';
 import * as portfolio from './portfolio.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -409,6 +409,9 @@ async function runEvaluate(provider) {
         id, strategyId: strat.id, strategyName: strat.name, symbol: t.symbol, shares,
         entryTime: now, entryDate: fmtTime(now, intraday), entryPrice: price, peak: price,
         exitDueTime: now + holdSeconds, exitDuePrice: null, live: true,
+        // The pattern's sector trading style — quick targets/stops for volatile
+        // sectors, wide for stable ones (same style the pattern was scored with).
+        exit: (() => { const st = sectorStyle(strat.scenario.sectorKey); return { target: st.target, stop: st.stop, trail: st.trail, trailArm: st.trailArm }; })(),
         exitTime: null, exitDate: null, exitPrice: null, status: 'open', pnl: null, pnlPct: null, intraday,
       };
     }
@@ -429,11 +432,12 @@ async function runEvaluate(provider) {
     t.peak = Math.max(t.peak || t.entryPrice, price);
     const gain = (price - t.entryPrice) / t.entryPrice;
     const peakGain = (t.peak - t.entryPrice) / t.entryPrice;
+    const ex = t.exit || { target: EXIT.targetPct, stop: EXIT.stopPct, trail: EXIT.trailPct, trailArm: EXIT.trailArm };
     let reason = null;
     if (t.shares * price < DUST_MIN_USD) reason = 'dust'; // clean out meaningless micro-positions
-    else if (gain >= EXIT.targetPct) reason = 'target';
-    else if (gain <= -EXIT.stopPct) reason = 'stop';
-    else if (peakGain >= EXIT.trailArm && price <= t.peak * (1 - EXIT.trailPct)) reason = 'trail';
+    else if (gain >= ex.target) reason = 'target';
+    else if (gain <= -ex.stop) reason = 'stop';
+    else if (peakGain >= ex.trailArm && price <= t.peak * (1 - ex.trail)) reason = 'trail';
     else if (t.exitDueTime != null && nowTs >= t.exitDueTime) reason = 'time';
     if (reason) sellOut(t, price, nowTs, reason);
   }

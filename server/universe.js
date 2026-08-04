@@ -81,6 +81,37 @@ export const SECTOR_TARGETS = {
 // pattern it trades maps to a target bucket.
 export const TARGET_SECTORS = Object.keys(SECTOR_TARGETS);
 
+// ---- per-sector trading style ------------------------------------------------
+// Volatile sectors are traded actively (short holds, quick targets/stops so we
+// take the swings); stable sectors are held as long-term positions (long holds,
+// wide targets/stops so normal wobble doesn't shake us out). These parameters
+// drive BOTH the pattern scoring (so the ranking reflects the style) and live
+// exits, keeping them consistent.
+const STYLE_TIERS = {
+  // fast, active trading
+  volatile: { horizons: [2, 3, 5], target: 0.06, stop: 0.04, trail: 0.025, trailArm: 0.03 },
+  // the middle-ground default
+  moderate: { horizons: [5, 10, 15], target: 0.08, stop: 0.05, trail: 0.03, trailArm: 0.04 },
+  // slow, long-term holds
+  stable: { horizons: [20, 30, 45, 60], target: 0.14, stop: 0.09, trail: 0.05, trailArm: 0.07 },
+};
+const SECTOR_TIER = {
+  technology: 'volatile',
+  semiconductors: 'volatile',
+  energy: 'volatile',
+  consumer: 'volatile', // consumer discretionary — TSLA/AMZN-type volatility
+  financials: 'moderate',
+  industrials: 'moderate',
+  communication: 'moderate',
+  biotech: 'stable', // health care
+  staples: 'stable', // consumer staples
+  utilities: 'stable',
+};
+export function sectorStyle(key) {
+  const tier = SECTOR_TIER[key] || 'moderate';
+  return { tier, ...STYLE_TIERS[tier] };
+}
+
 // Canonical single sector for a symbol, resolving universe overlaps by priority
 // (e.g. GOOGL/META -> communication, NVDA -> semiconductors, AAPL -> technology)
 // so portfolio exposure can be attributed to exactly one target bucket.
