@@ -14,6 +14,7 @@ import * as aitrader from './aitrader.js';
 import * as strategist from './strategist.js';
 import { withDatabase, dbStats, dbBackend, getSplits, getDividends, getEarnings } from './marketdb.js';
 import * as scheduler from './scheduler.js';
+import { scoreImportance, importanceRank, mockNews } from './news.js';
 
 // Choose the market-data source:
 //   - polygon  (default when POLYGON_API_KEY is set) — real quotes + deep history
@@ -376,6 +377,29 @@ app.post(
   '/api/strategist/run',
   wrap(async (req, res) => {
     res.json(await strategist.forceCycle());
+  })
+);
+
+// Market news, importance-scored (for the floating news layer). Cached briefly.
+let newsCache = { at: 0, data: [] };
+app.get(
+  '/api/news',
+  wrap(async (req, res) => {
+    const now = Date.now();
+    if (now - newsCache.at < 120_000 && newsCache.data.length) return res.json(newsCache.data);
+    let items = [];
+    try {
+      items = HAS_POLYGON ? await polygonProvider.news(40) : mockNews();
+    } catch {
+      items = mockNews();
+    }
+    if (!items || !items.length) items = mockNews();
+    const out = items
+      .map((a) => ({ ...a, importance: scoreImportance(a) }))
+      .sort((a, b) => importanceRank(b.importance) - importanceRank(a.importance) || new Date(b.published || 0) - new Date(a.published || 0))
+      .slice(0, 24);
+    newsCache = { at: now, data: out };
+    res.json(out);
   })
 );
 

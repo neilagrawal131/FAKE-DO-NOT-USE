@@ -674,6 +674,73 @@ async function showConfig() {
 }
 
 // ---------------------------------------------------------------------------
+// Floating market news (Trade page)
+// ---------------------------------------------------------------------------
+function newsAgo(iso) {
+  try {
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h`;
+    return `${Math.floor(s / 86400)}d`;
+  } catch {
+    return '';
+  }
+}
+function renderNews(items) {
+  const el = $('#news-cards');
+  if (!el) return;
+  el.innerHTML = (items || [])
+    .map((a, i) => {
+      const imp = a.importance || 'low';
+      const img = a.imageUrl
+        ? `<div class="news-img"><img src="${escapeHtml(a.imageUrl)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.parentNode.classList.add('ph');this.remove()"/></div>`
+        : '<div class="news-img ph"></div>';
+      const when = a.published ? newsAgo(a.published) : '';
+      const href = a.url && a.url !== '#' ? ` href="${escapeHtml(a.url)}" target="_blank" rel="noopener"` : '';
+      const tag = href ? 'a' : 'div';
+      return `<${tag} class="news-card imp-${imp}"${href} style="animation-delay:${(i % 6) * 0.5}s">
+        ${img}
+        <div class="news-body">
+          <div class="news-title">${escapeHtml(a.title || '')}</div>
+          <div class="news-meta">
+            <span class="news-pub">${escapeHtml(a.publisher || '')}${when ? ' · ' + when : ''}</span>
+            <span class="news-badge imp-${imp}">${imp}</span>
+          </div>
+        </div>
+      </${tag}>`;
+    })
+    .join('');
+}
+async function loadNews() {
+  try {
+    renderNews(await api('/api/news'));
+  } catch {
+    /* leave prior cards */
+  }
+}
+function initNews() {
+  const btn = $('#news-toggle');
+  const layer = $('#news-float');
+  const content = $('#content');
+  if (!btn || !layer) return;
+  const sync = () => {
+    const on = !layer.hidden;
+    btn.classList.toggle('active', on);
+    if (content) content.classList.toggle('news-on', on);
+  };
+  btn.addEventListener('click', () => {
+    layer.hidden = !layer.hidden;
+    sync();
+    if (!layer.hidden) loadNews();
+  });
+  sync();
+  loadNews();
+  setInterval(() => {
+    if (!layer.hidden) loadNews();
+  }, 120_000);
+}
+
+// ---------------------------------------------------------------------------
 // AI Analyst (scenario backtesting)
 // ---------------------------------------------------------------------------
 const ANALYST_EXAMPLES = [
@@ -1401,6 +1468,7 @@ function boot() {
   initQuickPicks();
   initAnalyst();
   initTrader();
+  initNews();
   showConfig();
   refreshPortfolio();
   // Re-mark the portfolio to live prices frequently so each position's unrealized

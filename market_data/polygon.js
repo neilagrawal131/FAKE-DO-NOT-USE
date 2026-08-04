@@ -120,6 +120,23 @@ export async function earnings(symbol) {
   return out;
 }
 
+// Recent market news articles. Returns [{ id, title, description, publisher, url,
+// imageUrl, tickers, published, insights }].
+export async function news(limit = 40) {
+  const data = await pget(`/v2/reference/news?limit=${Math.min(1000, limit)}&order=desc&sort=published_utc`, 3 * 60 * 1000).catch(() => ({ results: [] }));
+  return (data.results || []).map((r) => ({
+    id: r.id,
+    title: r.title || '',
+    description: r.description || '',
+    publisher: r.publisher?.name || '',
+    url: r.article_url || '#',
+    imageUrl: r.image_url || null,
+    tickers: r.tickers || [],
+    published: r.published_utc || null,
+    insights: r.insights || null,
+  }));
+}
+
 // ---- spread modelling (same logic as yahoo.js, kept local for independence) ----
 function normalizeSpread(price, bid, ask) {
   const b = Number.isFinite(bid) && bid > 0 ? bid : null;
