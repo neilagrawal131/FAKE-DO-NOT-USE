@@ -525,12 +525,16 @@ function applyPortfolio(p) {
   window.__portfolio = p;
   $('#account-equity').textContent = usd(p.equity);
 
+  // Today's % change, relative to the start-of-day account value.
+  const dayBase = p.equity - p.dayChange;
+  const dayPct = dayBase > 0 ? (p.dayChange / dayBase) * 100 : 0;
+
   // summary tiles
   $('#summary-grid').innerHTML = `
     <div class="tile wide">
       <div class="tile-label">Account value</div>
       <div class="tile-value">${usd(p.equity)}</div>
-      <div class="tile-sub ${signClass(p.dayChange)}">${p.dayChange >= 0 ? '▲' : '▼'} ${usd(Math.abs(p.dayChange))} today</div>
+      <div class="tile-sub ${signClass(p.dayChange)}">${p.dayChange >= 0 ? '▲' : '▼'} ${usd(Math.abs(p.dayChange))} (${pct(dayPct)}) today</div>
     </div>
     <div class="tile">
       <div class="tile-label">Cash</div>
