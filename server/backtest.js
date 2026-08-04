@@ -4,6 +4,7 @@
 // aggregates that into "rose X% of the time by Y / fell ...".
 
 import { sectorSymbols, sectorLabel, sectorStyle } from './universe.js';
+import { getDividends } from './marketdb.js';
 import { describeScenario } from './scenario.js';
 
 // Pick an upstream fetch range big enough for the lookback + MA warmup + horizon.
@@ -160,19 +161,31 @@ function entryOk(bars, i, shortMA) {
 
 // Simulate the target/trailing/stop/time exit from an entry bar, returning the
 // realized % return (uses intrabar high/low, stop checked first = conservative).
-// `ex` = { target, stop, trail, trailArm } for the sector's trading style.
-function simulateExit(bars, entryIdx, horizon, ex) {
+// `ex` = { target, stop, trail, trailArm } for the sector's trading style. If a
+// dividend list is given, the return is TOTAL return — dividends paid while the
+// position was held are added back.
+function simulateExit(bars, entryIdx, horizon, ex, divs) {
   const entry = bars[entryIdx].close;
   const maxJ = Math.min(bars.length - 1, entryIdx + Math.max(1, horizon));
   let peak = entry;
+  let exitIdx = maxJ;
+  let exitPrice = bars[maxJ].close; // time backstop by default
   for (let j = entryIdx + 1; j <= maxJ; j++) {
     const b = bars[j];
-    if (b.low <= entry * (1 - ex.stop)) return ((entry * (1 - ex.stop) - entry) / entry) * 100;
-    if (b.high >= entry * (1 + ex.target)) return ((entry * (1 + ex.target) - entry) / entry) * 100;
+    if (b.low <= entry * (1 - ex.stop)) { exitIdx = j; exitPrice = entry * (1 - ex.stop); break; }
+    if (b.high >= entry * (1 + ex.target)) { exitIdx = j; exitPrice = entry * (1 + ex.target); break; }
     if (b.high > peak) peak = b.high;
-    if (peak >= entry * (1 + ex.trailArm) && b.close <= peak * (1 - ex.trail)) return ((b.close - entry) / entry) * 100;
+    if (peak >= entry * (1 + ex.trailArm) && b.close <= peak * (1 - ex.trail)) { exitIdx = j; exitPrice = b.close; break; }
   }
-  return ((bars[maxJ].close - entry) / entry) * 100; // time backstop
+  let ret = (exitPrice - entry) / entry;
+  if (divs && divs.length) {
+    const t0 = bars[entryIdx].time;
+    const t1 = bars[exitIdx].time;
+    let cash = 0;
+    for (const d of divs) if (d.ts > t0 && d.ts <= t1) cash += d.cash; // dividends while held
+    if (cash) ret += cash / entry;
+  }
+  return ret * 100;
 }
 
 // Score a pattern the way it actually TRADES: only dip entries, exited by the
@@ -195,12 +208,13 @@ export async function simulatePattern(scenario, provider) {
     const maCache = new Map();
     for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
     const shortMA = movingAverage(bars, ENTRY.maPeriod, 'sma');
+    const divs = getDividends(sym); // total-return: dividends held during a trade
     const rets = [];
     for (let i = 1; i < bars.length - 1; i++) {
       if (bars[i].time < cutoff) continue;
       if (!conditionsMet(scenario.conditions, bars, maCache, i)) continue;
       if (!entryOk(bars, i, shortMA)) continue;
-      rets.push(simulateExit(bars, i, H, ex));
+      rets.push(simulateExit(bars, i, H, ex, divs));
     }
     return rets;
   });

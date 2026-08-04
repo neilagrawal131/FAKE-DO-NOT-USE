@@ -170,6 +170,15 @@ a −50% crash and wreck backtests. It's applied exactly once per split (backfil
 bars, which arrive already adjusted, are seeded so they're never double-adjusted).
 `GET /api/marketdb/splits/:symbol` lists what's recorded.
 
+**Dividends → total return.** A `dividends` table records every cash dividend
+(ex-date + amount, from Polygon). Because Polygon's bars are split-adjusted but
+*not* dividend-adjusted — and the nightly refetch keeps re-pulling
+dividend-unadjusted bars — dividends are applied where they matter instead of
+mutating the price bars: the paper account is **credited the cash when it holds a
+position across an ex-date** (shown as a `div` entry in the blotter), and the
+Strategist's **backtest scoring is total-return** (dividends paid during a trade
+are added to its result). `GET /api/marketdb/dividends/:symbol` lists them.
+
 ### Market-data providers
 
 The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):

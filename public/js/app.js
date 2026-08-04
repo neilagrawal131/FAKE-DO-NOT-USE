@@ -583,9 +583,13 @@ function applyPortfolio(p) {
   } else {
     orderEl.innerHTML = p.orders
       .slice(0, 40)
-      .map(
-        (o) => `
-        <div class="order-row">
+      .map((o) =>
+        o.side === 'dividend'
+          ? `<div class="order-row">
+          <span><span class="order-side dividend">div</span> ${o.symbol}</span>
+          <span class="order-meta up">+${usd(o.amount)}</span>
+        </div>`
+          : `<div class="order-row">
           <span>${o.source === 'ai' ? `<span class="ai-tag" title="AI Trader — ${escapeHtml(o.strategyName || '')}">AI</span> ` : ''}<span class="order-side ${o.side}">${o.side}</span> ${o.symbol}</span>
           <span class="order-meta">${num(o.shares, 4)} @ ${usd(o.price)}</span>
         </div>`

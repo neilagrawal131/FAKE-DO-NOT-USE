@@ -93,6 +93,16 @@ export async function splits(symbol) {
     .filter((s) => s.ts > 0 && s.from > 0 && s.to > 0);
 }
 
+// Cash dividends for a symbol. Returns [{ ts, cash }] where `ts` is the
+// ex-dividend date (unix seconds) and `cash` is the per-share cash amount.
+export async function dividends(symbol) {
+  const sym = symbol.toUpperCase();
+  const data = await pget(`/v3/reference/dividends?ticker=${encodeURIComponent(sym)}&limit=1000&order=asc`, 24 * 60 * 60 * 1000).catch(() => ({ results: [] }));
+  return (data.results || [])
+    .map((r) => ({ ts: Math.floor(new Date(`${r.ex_dividend_date}T00:00:00Z`).getTime() / 1000), cash: Number(r.cash_amount) }))
+    .filter((d) => d.ts > 0 && d.cash > 0);
+}
+
 // ---- spread modelling (same logic as yahoo.js, kept local for independence) ----
 function normalizeSpread(price, bid, ask) {
   const b = Number.isFinite(bid) && bid > 0 ? bid : null;

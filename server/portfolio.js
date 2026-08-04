@@ -114,6 +114,21 @@ export function trade({ side, symbol, shares, price, ts, bid = null, ask = null,
   return order;
 }
 
+// Credit cash to the account (e.g. a dividend paid while holding a position).
+// Recorded in the blotter as a 'dividend' entry and counted as realized gains.
+export function credit({ symbol, amount, ts, note = 'dividend' }) {
+  const s = load();
+  amount = Number(amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  s.cash += amount;
+  s.realizedPnL += amount;
+  const order = { id: nextOrderId(), ts, side: 'dividend', symbol: (symbol || '').toUpperCase(), shares: null, price: null, amount, note, source: 'div' };
+  s.orders.unshift(order);
+  if (s.orders.length > 500) s.orders.length = 500;
+  persist();
+  return order;
+}
+
 // Build a marked-to-market view given a { symbol -> {price, previousClose} } map.
 export function summarize(priceMap = {}) {
   const s = load();

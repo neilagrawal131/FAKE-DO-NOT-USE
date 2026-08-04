@@ -9,7 +9,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { upsertBars, dbStats, reconcileSplits } from './marketdb.js';
+import { upsertBars, dbStats, reconcileSplits, recordDividends } from './marketdb.js';
 import { TARGET_SECTORS, sectorSymbols } from './universe.js';
 import { saveJSON, loadJSON } from './store.js';
 
@@ -26,6 +26,7 @@ const WINDOWS = [
 
 let provider = null;
 let splitsFn = null;
+let divsFn = null;
 let running = false;
 let timer = null;
 let lastDay = null;
@@ -34,9 +35,10 @@ let lastResult = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const today = () => new Date().toISOString().slice(0, 10);
 
-export function start(activeProvider, fetchSplits = null) {
+export function start(activeProvider, fetchSplits = null, fetchDivs = null) {
   provider = activeProvider;
   splitsFn = fetchSplits;
+  divsFn = fetchDivs;
   const st = loadJSON(STATE_FILE, () => ({})) || {};
   lastDay = st.lastTopUp || null;
   lastResult = st.lastResult || null;
@@ -79,6 +81,15 @@ async function topUp(trigger = 'manual') {
         }
       } catch {
         /* splits are best-effort */
+      }
+      await sleep(delay);
+    }
+    // Record cash dividends (the account is credited when it holds over an ex-date).
+    if (divsFn) {
+      try {
+        recordDividends(sym, await divsFn(sym));
+      } catch {
+        /* dividends are best-effort */
       }
       await sleep(delay);
     }

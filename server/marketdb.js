@@ -40,6 +40,8 @@ class SqliteStore {
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS splits (symbol TEXT, ts INTEGER, sfrom REAL, sto REAL, applied INTEGER DEFAULT 0, PRIMARY KEY (symbol, ts));'
     );
+    // Cash dividends: one row per ex-dividend date.
+    this.db.exec('CREATE TABLE IF NOT EXISTS dividends (symbol TEXT, ts INTEGER, cash REAL, PRIMARY KEY (symbol, ts));');
     this.insert = this.db.prepare('INSERT OR REPLACE INTO bars (symbol, interval, t, o, h, l, c, v) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     this.selRange = this.db.prepare('SELECT t, o, h, l, c, v FROM bars WHERE symbol = ? AND interval = ? AND t BETWEEN ? AND ? ORDER BY t');
     this.selAll = this.db.prepare('SELECT t, o, h, l, c, v FROM bars WHERE symbol = ? AND interval = ? ORDER BY t');
@@ -49,6 +51,18 @@ class SqliteStore {
     this.setApplied = this.db.prepare('UPDATE splits SET applied = 1 WHERE symbol = ? AND ts = ?');
     // Back-adjust every stored bar before a split: prices x priceMul, volume x volMul.
     this.adjust = this.db.prepare('UPDATE bars SET o = o * ?, h = h * ?, l = l * ?, c = c * ?, v = v * ? WHERE symbol = ? AND t < ?');
+    this.selDivs = this.db.prepare('SELECT ts, cash FROM dividends WHERE symbol = ? ORDER BY ts');
+    this.insDiv = this.db.prepare('INSERT OR REPLACE INTO dividends (symbol, ts, cash) VALUES (?, ?, ?)');
+    this.selDivsBetween = this.db.prepare('SELECT ts, cash FROM dividends WHERE symbol = ? AND ts > ? AND ts <= ? ORDER BY ts');
+  }
+  getDividends(symbol) {
+    return this.selDivs.all(symbol).map((r) => ({ ts: r.ts, cash: r.cash }));
+  }
+  recordDividend(symbol, ts, cash) {
+    this.insDiv.run(symbol, ts, cash);
+  }
+  dividendsBetween(symbol, from, to) {
+    return this.selDivsBetween.all(symbol, from, to).map((r) => ({ ts: r.ts, cash: r.cash }));
   }
   getSplits(symbol) {
     return this.selSplits.all(symbol).map((r) => ({ ts: r.ts, from: r.sfrom, to: r.sto, applied: r.applied === 1 }));
@@ -85,7 +99,8 @@ class SqliteStore {
     const g = this.db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT symbol) syms, MIN(t) lo, MAX(t) hi FROM bars').get();
     const perInt = this.db.prepare('SELECT interval, COUNT(*) n FROM bars GROUP BY interval').all();
     const sp = this.db.prepare('SELECT COUNT(*) n FROM splits').get();
-    return { backend: 'sqlite', bars: g.n || 0, symbols: g.syms || 0, from: g.lo || null, to: g.hi || null, byInterval: Object.fromEntries(perInt.map((r) => [r.interval, r.n])), splits: sp.n || 0 };
+    const dv = this.db.prepare('SELECT COUNT(*) n FROM dividends').get();
+    return { backend: 'sqlite', bars: g.n || 0, symbols: g.syms || 0, from: g.lo || null, to: g.hi || null, byInterval: Object.fromEntries(perInt.map((r) => [r.interval, r.n])), splits: sp.n || 0, dividends: dv.n || 0 };
   }
 }
 
@@ -97,9 +112,27 @@ class FileStore {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     this.splitsFile = join(dir, '_splits.json');
     this.splits = loadJSON(this.splitsFile, () => ({})) || {}; // { symbol: [{ts,from,to,applied}] }
+    this.divsFile = join(dir, '_dividends.json');
+    this.divs = loadJSON(this.divsFile, () => ({})) || {}; // { symbol: [{ts,cash}] }
   }
   _saveSplits() {
     saveJSON(this.splitsFile, this.splits);
+  }
+  getDividends(symbol) {
+    return (this.divs[symbol] || []).map((d) => ({ ...d }));
+  }
+  recordDividend(symbol, ts, cash) {
+    const list = this.divs[symbol] || (this.divs[symbol] = []);
+    const ex = list.find((d) => d.ts === ts);
+    if (ex) ex.cash = cash;
+    else {
+      list.push({ ts, cash });
+      list.sort((a, b) => a.ts - b.ts);
+    }
+    saveJSON(this.divsFile, this.divs);
+  }
+  dividendsBetween(symbol, from, to) {
+    return (this.divs[symbol] || []).filter((d) => d.ts > from && d.ts <= to).map((d) => ({ ...d }));
   }
   _intervals(symbol) {
     let files = [];
@@ -187,7 +220,8 @@ class FileStore {
       bars += this._load(s, i).length;
     }
     const splits = Object.values(this.splits).reduce((a, l) => a + l.length, 0);
-    return { backend: 'file', bars, symbols: syms.size, files: files.length, splits };
+    const dividends = Object.values(this.divs).reduce((a, l) => a + l.length, 0);
+    return { backend: 'file', bars, symbols: syms.size, files: files.length, splits, dividends };
   }
 }
 
@@ -217,6 +251,24 @@ export function dbBackend() {
 }
 export function getSplits(symbol) {
   return store.getSplits(String(symbol).toUpperCase());
+}
+export function getDividends(symbol) {
+  return store.getDividends(String(symbol).toUpperCase());
+}
+// Cash dividends with an ex-date in (from, to] — used to make holding-period
+// returns total-return (add back what you'd have been paid while holding).
+export function dividendsBetween(symbol, from, to) {
+  return store.dividendsBetween(String(symbol).toUpperCase(), from, to);
+}
+export function recordDividends(symbol, events) {
+  const sym = String(symbol).toUpperCase();
+  let n = 0;
+  for (const e of events || []) {
+    if (!(e.ts > 0) || !(e.cash > 0)) continue;
+    store.recordDividend(sym, e.ts, e.cash);
+    n++;
+  }
+  return n;
 }
 
 // Record splits as ALREADY reflected in our stored bars (no adjustment). Called

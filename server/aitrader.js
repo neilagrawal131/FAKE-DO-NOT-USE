@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { saveJSON, loadJSON } from './store.js';
 import { collectSignals, liveTriggers, EXIT } from './backtest.js';
+import { dividendsBetween } from './marketdb.js';
 import { describeScenario } from './scenario.js';
 import { sectorLabel, symbolSector, sectorTarget, sectorStyle, SECTOR_TARGETS } from './universe.js';
 import * as portfolio from './portfolio.js';
@@ -429,6 +430,22 @@ async function runEvaluate(provider) {
       /* fall back to entry price */
     }
     if (!(price > 0)) continue;
+    // Total return: credit any dividends whose ex-date passed while we've held
+    // this position (each one credited exactly once).
+    const since = t.divThroughTs || t.entryTime;
+    if (nowTs > since) {
+      let cash = 0;
+      try {
+        for (const d of dividendsBetween(t.symbol, since, nowTs)) cash += d.cash * t.shares;
+      } catch {
+        /* no dividend data */
+      }
+      t.divThroughTs = nowTs;
+      if (cash > 0) {
+        portfolio.credit({ symbol: t.symbol, amount: cash, ts: nowTs, note: `dividend on ${t.symbol}` });
+        t.divReceived = (t.divReceived || 0) + cash;
+      }
+    }
     t.peak = Math.max(t.peak || t.entryPrice, price);
     const gain = (price - t.entryPrice) / t.entryPrice;
     const peakGain = (t.peak - t.entryPrice) / t.entryPrice;
