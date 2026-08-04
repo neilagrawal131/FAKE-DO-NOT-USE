@@ -689,22 +689,34 @@ function newsAgo(iso) {
 function renderNews(items) {
   const el = $('#news-cards');
   if (!el) return;
-  el.innerHTML = (items || [])
+  const list = items || [];
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">No market news right now.</div>';
+    return;
+  }
+  // API returns most-important-first; the top story is rendered as a featured hero.
+  el.innerHTML = list
     .map((a, i) => {
-      const imp = a.importance || 'low';
+      const feat = i === 0;
       const img = a.imageUrl
-        ? `<div class="news-img"><img src="${escapeHtml(a.imageUrl)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" onerror="this.parentNode.classList.add('ph');this.remove()"/></div>`
+        ? `<div class="news-img"><img src="${escapeHtml(a.imageUrl)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('ph');this.remove()"/></div>`
         : '<div class="news-img ph"></div>';
       const when = a.published ? newsAgo(a.published) : '';
       const href = a.url && a.url !== '#' ? ` href="${escapeHtml(a.url)}" target="_blank" rel="noopener"` : '';
       const tag = href ? 'a' : 'div';
-      return `<${tag} class="news-card imp-${imp}"${href} style="animation-delay:${(i % 6) * 0.5}s">
+      const top = feat ? '<span class="news-top">Top story</span>' : '';
+      const desc =
+        feat && a.description
+          ? `<p class="news-desc">${escapeHtml(a.description)}</p>`
+          : '';
+      return `<${tag} class="news-card${feat ? ' feat' : ''}"${href}>
         ${img}
         <div class="news-body">
+          ${top}
           <div class="news-title">${escapeHtml(a.title || '')}</div>
+          ${desc}
           <div class="news-meta">
             <span class="news-pub">${escapeHtml(a.publisher || '')}${when ? ' · ' + when : ''}</span>
-            <span class="news-badge imp-${imp}">${imp}</span>
           </div>
         </div>
       </${tag}>`;
@@ -714,30 +726,17 @@ function renderNews(items) {
 async function loadNews() {
   try {
     renderNews(await api('/api/news'));
+    const stamp = $('#news-updated');
+    if (stamp) stamp.innerHTML = `<i class="pulse"></i>updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   } catch {
-    /* leave prior cards */
+    /* keep the prior cards on a transient fetch failure */
   }
 }
 function initNews() {
-  const btn = $('#news-toggle');
-  const layer = $('#news-float');
-  const content = $('#content');
-  if (!btn || !layer) return;
-  const sync = () => {
-    const on = !layer.hidden;
-    btn.classList.toggle('active', on);
-    if (content) content.classList.toggle('news-on', on);
-  };
-  btn.addEventListener('click', () => {
-    layer.hidden = !layer.hidden;
-    sync();
-    if (!layer.hidden) loadNews();
-  });
-  sync();
+  if (!$('#news-cards')) return;
   loadNews();
-  setInterval(() => {
-    if (!layer.hidden) loadNews();
-  }, 120_000);
+  // Keep the gallery reflecting the newest data.
+  setInterval(loadNews, 60_000);
 }
 
 // ---------------------------------------------------------------------------

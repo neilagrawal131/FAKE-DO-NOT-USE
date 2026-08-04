@@ -46,7 +46,6 @@
               />
               <div class="search-results" id="search-results" hidden></div>
             </div>
-            <button class="news-toggle active" id="news-toggle" title="Toggle floating market news">📰 News</button>
             <div class="account-pill" id="account-pill" title="Total account equity">
               <span class="account-label">Equity</span>
               <span class="account-value" id="account-equity">—</span>
@@ -73,19 +72,6 @@
             </aside>
 
             <section class="content" id="content">
-              <!-- Floating market-news layer -->
-              <div class="news-float" id="news-float">
-                <div class="news-float-head">
-                  <span>📰 Market News</span>
-                  <span class="news-legend">
-                    <i class="dot imp-high"></i>high
-                    <i class="dot imp-medium"></i>medium
-                    <i class="dot imp-low"></i>low
-                  </span>
-                </div>
-                <div class="news-cards" id="news-cards"></div>
-              </div>
-
               <div class="welcome" id="welcome">
                 <h1>Trade the market with virtual money.</h1>
                 <p>
@@ -94,6 +80,16 @@
                   practice buying and selling with a $100,000 paper account.
                 </p>
                 <div class="quick-picks" id="quick-picks"></div>
+
+                <!-- Market-news gallery — most important story first, auto-updating -->
+                <section class="news-gallery" id="news-gallery" aria-label="Market news">
+                  <div class="news-gallery-head">
+                    <h2>📰 Market news</h2>
+                    <span class="news-gallery-sub">Ranked by importance — most significant first</span>
+                    <span class="news-updated" id="news-updated"><i class="pulse"></i>live</span>
+                  </div>
+                  <div class="news-grid" id="news-cards"></div>
+                </section>
               </div>
 
               <article class="detail" id="detail" hidden>

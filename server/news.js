@@ -1,5 +1,6 @@
-// Market-news helpers: rate an article's importance (for color-coding) and a
-// synthetic feed so the news layer works in demo mode / without a Polygon key.
+// Market-news helpers: rate an article's importance (used to rank the Trade-page
+// gallery, most important first) and a synthetic feed so the gallery works in
+// demo mode / without a Polygon key.
 
 // Market-moving words weigh more than routine ones.
 const HIGH_WORDS = [

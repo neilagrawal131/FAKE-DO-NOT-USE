@@ -380,13 +380,14 @@ app.post(
   })
 );
 
-// Market news, importance-scored (for the floating news layer). Cached briefly.
+// Market news for the Trade-page gallery, importance-ranked. Cached briefly so
+// the gallery keeps reflecting the newest data without hammering upstream.
 let newsCache = { at: 0, data: [] };
 app.get(
   '/api/news',
   wrap(async (req, res) => {
     const now = Date.now();
-    if (now - newsCache.at < 120_000 && newsCache.data.length) return res.json(newsCache.data);
+    if (now - newsCache.at < 60_000 && newsCache.data.length) return res.json(newsCache.data);
     let items = [];
     try {
       items = HAS_POLYGON ? await polygonProvider.news(40) : mockNews();
