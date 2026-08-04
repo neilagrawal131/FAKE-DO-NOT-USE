@@ -37,16 +37,18 @@ function cacheSet(key, value, ttlMs) {
   cache.set(key, { value, expires: Date.now() + ttlMs });
 }
 
-async function pget(path, ttlMs = 30_000) {
+async function pget(path, ttlMs = 30_000, skipCache = false) {
   const key = apiKey();
   if (!key) throw new Error('POLYGON_API_KEY is not set');
-  const cached = cacheGet(path);
-  if (cached) return cached;
+  if (!skipCache) {
+    const cached = cacheGet(path);
+    if (cached) return cached;
+  }
 
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
   });
-  if (res.status === 429) throw new Error('Polygon rate limit (429) — upgrade the plan or reduce request rate');
+  if (res.status === 429) throw Object.assign(new Error('Polygon rate limit (429) — upgrade the plan or reduce request rate'), { status: 429 });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Polygon ${res.status} for ${path}: ${body.slice(0, 140)}`);
@@ -55,8 +57,30 @@ async function pget(path, ttlMs = 30_000) {
   if (data.status === 'ERROR' || data.status === 'NOT_AUTHORIZED') {
     throw new Error(`Polygon: ${data.error || data.message || data.status}`);
   }
-  cacheSet(path, data, ttlMs);
+  if (!skipCache) cacheSet(path, data, ttlMs);
   return data;
+}
+
+// Fetch every bar for an explicit date range (YYYY-MM-DD), following Polygon's
+// next_url pagination. Uncached — meant for bulk backfill, not the hot path.
+export async function barsBetween(symbol, fromDate, toDate, { multiplier = 1, timespan = 'minute' } = {}) {
+  const sym = symbol.toUpperCase();
+  let url =
+    `/v2/aggs/ticker/${encodeURIComponent(sym)}/range/${multiplier}/${timespan}/` +
+    `${fromDate}/${toDate}?adjusted=true&sort=asc&limit=50000`;
+  const out = [];
+  let guard = 0;
+  while (url && guard++ < 200) {
+    const data = await pget(url, 0, true);
+    for (const r of data.results || []) {
+      if (Number.isFinite(r.o) && Number.isFinite(r.c)) {
+        out.push({ time: Math.floor(r.t / 1000), open: r.o, high: r.h, low: r.l, close: r.c, volume: r.v || 0 });
+      }
+    }
+    // next_url is an absolute URL (Bearer auth carries the key in the header).
+    url = data.next_url ? data.next_url.replace(BASE, '') : null;
+  }
+  return out;
 }
 
 // ---- spread modelling (same logic as yahoo.js, kept local for independence) ----

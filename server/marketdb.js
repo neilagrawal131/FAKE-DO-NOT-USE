@@ -32,6 +32,7 @@ class SqliteStore {
     if (!existsSync(dirname(file))) mkdirSync(dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('PRAGMA busy_timeout = 5000;'); // tolerate the backfill script writing concurrently
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS bars (symbol TEXT, interval TEXT, t INTEGER, o REAL, h REAL, l REAL, c REAL, v REAL, PRIMARY KEY (symbol, interval, t));'
     );

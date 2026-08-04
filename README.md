@@ -141,6 +141,20 @@ added). The upstream API is hit only to fill gaps or top up recent bars.
 - Tuning: `MARKETDB_FETCH_COOLDOWN_MS` (default 1 h) caps how often a given series
   is topped up from upstream.
 
+**Backfill years of minute bars** into the database (Polygon) with:
+
+```bash
+npm run backfill                        # all target-sector symbols, 2y of 1-min bars
+node scripts/backfill.mjs --years 5 --rpm 100   # deeper + faster (paid Polygon tier)
+node scripts/backfill.mjs --symbols AAPL,MSFT   # just a couple
+```
+
+It pages Polygon's minute aggregates into the store and rolls them up to 30-minute
+bars for the intraday backtester. It's **resumable** (already-stored chunks are
+skipped) and **rate-limited** to `--rpm` requests/minute (free tier = 5; it backs
+off on a 429), so you can run it overnight. Run it with the server stopped, or let
+them share the DB (SQLite WAL + a busy timeout handle concurrent access).
+
 ### Market-data providers
 
 The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):
