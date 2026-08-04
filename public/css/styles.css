@@ -612,12 +612,12 @@ input { font-family: inherit; }
 
 /* Featured (most important) story spans the row and reads as a hero. */
 .news-card.feat { grid-column: 1 / -1; flex-direction: row; }
-.news-card.feat .news-img { width: 44%; max-width: 420px; height: auto; min-height: 190px; }
+.news-card.feat .news-img { width: 56%; max-width: 620px; height: auto; min-height: 300px; }
 .news-card.feat .news-body { justify-content: center; gap: 10px; padding: 20px 22px; }
 .news-card.feat .news-title { font-size: 20px; font-weight: 700; -webkit-line-clamp: 3; line-clamp: 3; }
 .news-card.feat .news-desc { font-size: 13.5px; -webkit-line-clamp: 3; line-clamp: 3; }
 @media (max-width: 720px) {
   .news-card.feat { flex-direction: column; }
-  .news-card.feat .news-img { width: 100%; max-width: none; min-height: 0; height: 150px; }
+  .news-card.feat .news-img { width: 100%; max-width: none; min-height: 0; height: 210px; }
   .news-card.feat .news-title { font-size: 17px; }
 }
