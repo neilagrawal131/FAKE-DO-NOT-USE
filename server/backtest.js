@@ -128,6 +128,54 @@ function maKey(c) {
   return `${c.maType}:${c.period}`;
 }
 
+// Classify the market regime in the trailing window ending at bar i, so the
+// analyst can compare how a pattern performs across regimes rather than lumping
+// every occurrence together. Three independent axes:
+//   direction  — bull / bear / sideways   (net move vs a volatility-scaled band)
+//   vol        — high / normal / low       (annualized realized volatility)
+//   structure  — trending / meanrev / mixed (Kaufman efficiency ratio)
+// Returns null when there isn't enough history before the bar to judge.
+function classifyRegime(bars, i, barsPerYear, lookback = 60) {
+  const start = Math.max(0, i - lookback);
+  const closes = [];
+  for (let k = start; k <= i; k++) closes.push(bars[k].close);
+  if (closes.length < 12) return null;
+
+  const rets = [];
+  for (let k = 1; k < closes.length; k++) rets.push((closes[k] - closes[k - 1]) / closes[k - 1]);
+  const n = rets.length;
+  const m = rets.reduce((a, b) => a + b, 0) / n;
+  let v = 0;
+  for (const r of rets) v += (r - m) * (r - m);
+  const sd = Math.sqrt(v / Math.max(1, n - 1)); // per-bar realized vol
+  const netMove = (closes[closes.length - 1] - closes[0]) / closes[0];
+
+  // Direction: a trend must clear a band of ~0.6σ of the cumulative move, so a
+  // calm stock needs a smaller drift to count as a trend than a wild one does.
+  const band = Math.max(0.02, sd * Math.sqrt(n) * 0.6);
+  const direction = netMove > band ? 'bull' : netMove < -band ? 'bear' : 'sideways';
+
+  // Volatility: annualize per-bar vol, bucket on fixed cutoffs (~18% / ~35%).
+  const annVol = sd * Math.sqrt(barsPerYear);
+  const vol = annVol >= 0.35 ? 'high' : annVol <= 0.18 ? 'low' : 'normal';
+
+  // Structure: efficiency ratio = |net move| / sum|bar-to-bar move|. Near 1 is a
+  // clean trend; near 0 is choppy / mean-reverting.
+  let gross = 0;
+  for (let k = 1; k < closes.length; k++) gross += Math.abs(closes[k] - closes[k - 1]);
+  const er = gross > 0 ? Math.abs(closes[closes.length - 1] - closes[0]) / gross : 0;
+  const structure = er >= 0.35 ? 'trending' : er <= 0.18 ? 'meanrev' : 'mixed';
+
+  return {
+    direction,
+    vol,
+    structure,
+    annVol: +(annVol * 100).toFixed(1),
+    trend: +(netMove * 100).toFixed(1),
+    er: +er.toFixed(2),
+  };
+}
+
 // --- entry filter & exit rules (shared by live trading and pattern scoring) ----
 // Enter LOWER: only take a signal on a pullback (price in the lower part of its
 // recent range) and never when it's stretched far above its short MA.
@@ -247,6 +295,7 @@ export async function runBacktest(scenario, provider) {
   const nowSec = Math.floor(Date.now() / 1000);
   const cutoff = nowSec - scenario.lookbackDays * 86400;
   const maxHorizon = Math.max(...scenario.horizons);
+  const barsPerYear = intraday ? 252 * 13 : 252; // ~13 30-min bars per session
 
   // Which MA series we need to precompute per symbol.
   const maDefs = scenario.conditions
@@ -287,6 +336,7 @@ export async function runBacktest(scenario, provider) {
           : new Date(bars[i].time * 1000).toISOString().slice(0, 10),
         entry: bars[i].close,
         returns: rets,
+        regime: classifyRegime(bars, i, barsPerYear),
       });
     }
     return { symbol: sym, events, ok: true };

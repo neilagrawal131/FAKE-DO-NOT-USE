@@ -621,3 +621,37 @@ input { font-family: inherit; }
   .news-card.feat .news-img { width: 100%; max-width: none; min-height: 0; height: 210px; }
   .news-card.feat .news-title { font-size: 17px; }
 }
+
+/* ===== quantitative research panels (AI Analyst) ===== */
+/* Event-statistics grid */
+.qgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.qstat { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px; }
+.qstat-k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); margin-bottom: 5px; }
+.qstat-v { font-size: 19px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.qstat-v.up { color: var(--up); }
+.qstat-v.down { color: var(--down); }
+.qstat-h { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
+
+/* Monte Carlo */
+.mc-top { display: flex; align-items: stretch; gap: 18px; margin-bottom: 14px; flex-wrap: wrap; }
+.mc-headline { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; min-width: 140px; }
+.mc-prob { font-size: 40px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.mc-prob.up { color: var(--up); }
+.mc-prob.down { color: var(--down); }
+.mc-prob-cap { font-size: 12px; color: var(--text-dim); margin-top: 6px; max-width: 180px; }
+.mc-hist {
+  flex: 1 1 260px; display: flex; align-items: flex-end; gap: 2px; height: 96px;
+  padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  border-bottom: 2px solid var(--border-strong);
+}
+.mc-bar { flex: 1 1 auto; border-radius: 2px 2px 0 0; min-height: 3px; opacity: .9; }
+.mc-bar.pos { background: var(--up); }
+.mc-bar.neg { background: var(--down); }
+
+/* Regime breakdown — stacked full-width tables (like the horizon table) so every
+   column stays readable rather than cramming three tables into one row. */
+.regime-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.regime-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.regime-card h4 { margin: 0 0 8px; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px; }
+.regime-table { font-size: 12.5px; }
+.regime-table th, .regime-table td { padding: 7px 10px; }

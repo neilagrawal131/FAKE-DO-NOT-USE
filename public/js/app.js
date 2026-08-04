@@ -1,5 +1,6 @@
 import { PriceChart, CHART_COLORS } from './chart.js';
 import { ema, sma } from './indicators.js';
+import { fullStats, monteCarlo } from './stats.js';
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -877,6 +878,174 @@ function computeHorizonStats(events, horizons) {
   }));
 }
 
+// Chronologically-ordered primary-horizon returns from the active occurrence set,
+// so path metrics (drawdown, equity curve, Monte Carlo) use the real sequence.
+function primarySeries() {
+  const H = analysis.res.primaryHorizon;
+  const events = activeEvents()
+    .filter((e) => e.returns[H] != null)
+    .sort((a, b) => a.time - b.time);
+  return { events, rets: events.map((e) => e.returns[H]) };
+}
+
+const fmtPF = (x) => (x === Infinity ? '∞' : x == null ? '—' : x.toFixed(2));
+
+function qstat(label, value, cls, hint) {
+  return `<div class="qstat">
+    <div class="qstat-k">${label}</div>
+    <div class="qstat-v ${cls || ''}">${value}</div>
+    ${hint ? `<div class="qstat-h">${hint}</div>` : ''}
+  </div>`;
+}
+
+// The quantitative "Event statistics" panel — replaces a bare win-rate with a
+// full picture of reward, risk and reliability.
+function renderEventStats(st, H) {
+  if (!st || !st.n) return '';
+  return `
+    <div class="result-block">
+      <h3>Event statistics <span class="ev-hint">— the ${hzLabel(H)} forward return across every occurrence</span></h3>
+      <div class="qgrid">
+        ${qstat('Occurrences', st.n)}
+        ${qstat('Average return', sPct(st.mean), signClass(st.mean))}
+        ${qstat('Median return', sPct(st.median), signClass(st.median))}
+        ${qstat('Std deviation', st.stdev.toFixed(2) + '%', '', 'spread of outcomes')}
+        ${qstat('Best gain', sPct(st.best), 'up')}
+        ${qstat('Worst loss', sPct(st.worst), 'down')}
+        ${qstat('95% conf. interval', `${sPct(st.ci95[0])} … ${sPct(st.ci95[1])}`, '', 'for the mean return')}
+        ${qstat('Sharpe', st.sharpe.toFixed(2), signClass(st.sharpe), 'reward ÷ risk, per trade')}
+        ${qstat('Sortino', st.sortino.toFixed(2), signClass(st.sortino), 'reward ÷ downside risk')}
+        ${qstat('Profit factor', fmtPF(st.profitFactor), st.profitFactor >= 1 ? 'up' : 'down', 'gross gains ÷ losses')}
+        ${qstat('Max drawdown', st.maxDrawdown.toFixed(2) + '%', 'down', 'compounded, in sequence')}
+        ${qstat('Total return', sPct(st.totalReturn), signClass(st.totalReturn), 'compounded, all trades')}
+      </div>
+    </div>`;
+}
+
+// A compact vertical-bar histogram of Monte Carlo final returns; bars left of 0
+// are red, right of 0 green.
+function mcHistogram(hist) {
+  const max = Math.max(...hist.counts, 1);
+  return hist.counts
+    .map((c, i) => {
+      const x0 = hist.lo + i * hist.width;
+      const neg = x0 + hist.width <= 0;
+      const h = Math.round((c / max) * 100);
+      return `<span class="mc-bar ${neg ? 'neg' : 'pos'}" style="height:${Math.max(3, h)}%" title="${x0.toFixed(1)}% to ${(x0 + hist.width).toFixed(1)}%: ${c} runs"></span>`;
+    })
+    .join('');
+}
+
+// Monte Carlo panel — resample the trades 1,000× to see the distribution of
+// outcomes and whether the edge survives bad luck.
+function renderMonteCarlo(rets) {
+  const mc = monteCarlo(rets, { runs: 1000 });
+  if (!mc) return '';
+  const f = mc.final;
+  const pcls = mc.pProfit >= 50 ? 'up' : 'down';
+  return `
+    <div class="result-block">
+      <h3>Monte Carlo <span class="ev-hint">— ${mc.runs.toLocaleString()} resampled runs of ${mc.n} trades: does the edge survive bad luck?</span></h3>
+      <div class="mc-top">
+        <div class="mc-headline">
+          <div class="mc-prob ${pcls}">${mc.pProfit.toFixed(1)}%</div>
+          <div class="mc-prob-cap">of simulations ended <b>profitable</b></div>
+        </div>
+        <div class="mc-hist" title="Distribution of total return across ${mc.runs.toLocaleString()} runs">${mcHistogram(mc.hist)}</div>
+      </div>
+      <div style="overflow-x:auto"><table class="h-table">
+        <thead><tr><th>Total return</th><th>Worst 5%</th><th>25th</th><th>Median</th><th>75th</th><th>Best 5%</th></tr></thead>
+        <tbody><tr>
+          <td>compounded</td>
+          <td class="${signClass(f.p5)}">${sPct(f.p5)}</td>
+          <td class="${signClass(f.p25)}">${sPct(f.p25)}</td>
+          <td class="${signClass(f.median)}">${sPct(f.median)}</td>
+          <td class="${signClass(f.p75)}">${sPct(f.p75)}</td>
+          <td class="${signClass(f.p95)}">${sPct(f.p95)}</td>
+        </tr></tbody>
+      </table></div>
+      <div class="summary-line">
+        Median outcome <b class="${signClass(f.median)}">${sPct(f.median)}</b>; a bad-luck run (5th percentile)
+        returns <b class="${signClass(f.p5)}">${sPct(f.p5)}</b> and draws down about
+        <b class="down">${mc.drawdown.badCase.toFixed(1)}%</b> (worst of any run ${mc.drawdown.worst.toFixed(1)}%).
+      </div>
+    </div>`;
+}
+
+const REGIME_AXES = [
+  {
+    axis: 'direction',
+    title: 'Market direction',
+    order: ['bull', 'sideways', 'bear'],
+    labels: { bull: '🐂 Bull', sideways: '➡︎ Sideways', bear: '🐻 Bear' },
+  },
+  {
+    axis: 'vol',
+    title: 'Volatility',
+    order: ['low', 'normal', 'high'],
+    labels: { low: 'Low vol', normal: 'Normal vol', high: 'High vol' },
+  },
+  {
+    axis: 'structure',
+    title: 'Structure',
+    order: ['trending', 'mixed', 'meanrev'],
+    labels: { trending: 'Trending', mixed: 'Mixed', meanrev: 'Mean-reverting' },
+  },
+];
+
+function regimeRows(events, H, axis, order, labels) {
+  const groups = {};
+  for (const e of events) {
+    const r = e.returns[H];
+    if (r == null || !e.regime) continue;
+    const k = e.regime[axis];
+    if (!k) continue;
+    (groups[k] || (groups[k] = [])).push(r);
+  }
+  return order
+    .filter((k) => groups[k] && groups[k].length)
+    .map((k) => ({ label: labels[k], st: fullStats(groups[k]) }));
+}
+
+// Performance broken out by market regime — three axes (direction, volatility,
+// structure) so you can see where the pattern earns its edge and where it fails.
+function renderRegimes(events, H) {
+  if (!events.some((e) => e.regime)) return '';
+  const blocks = REGIME_AXES.map(({ axis, title, order, labels }) => {
+    const rows = regimeRows(events, H, axis, order, labels);
+    if (!rows.length) return '';
+    const body = rows
+      .map(
+        ({ label, st }) => `
+        <tr>
+          <td>${label}</td><td>${st.n}</td>
+          <td class="${signClass(st.mean)}">${sPct(st.mean)}</td>
+          <td class="${signClass(st.median)}">${sPct(st.median)}</td>
+          <td>${pctOnly(st.winRate)}</td>
+          <td class="${signClass(st.sharpe)}">${st.sharpe.toFixed(2)}</td>
+          <td>${fmtPF(st.profitFactor)}</td>
+        </tr>`
+      )
+      .join('');
+    return `
+      <div class="regime-card">
+        <h4>${title}</h4>
+        <div style="overflow-x:auto"><table class="h-table regime-table">
+          <thead><tr><th>Regime</th><th>N</th><th>Avg</th><th>Median</th><th>Win%</th><th>Sharpe</th><th>PF</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table></div>
+      </div>`;
+  })
+    .filter(Boolean)
+    .join('');
+  if (!blocks) return '';
+  return `
+    <div class="result-block">
+      <h3>Performance by market regime <span class="ev-hint">— where this pattern works, and where it doesn't</span></h3>
+      <div class="regime-grid">${blocks}</div>
+    </div>`;
+}
+
 function renderResults() {
   const res = analysis.res;
   const out = $('#analyst-results');
@@ -913,6 +1082,12 @@ function renderResults() {
   const primary = stats.find((h) => h.days === res.primaryHorizon) || stats[0];
 
   if (primary && primary.n) {
+    // Full quantitative event statistics (headline) — computed client-side from
+    // the active occurrences so it recomputes live as occurrences are removed.
+    const series = primarySeries();
+    const st = fullStats(series.rets, series.rets);
+    parts.push(renderEventStats(st, res.primaryHorizon));
+
     const upW = primary.pctUp || 0;
     const avgClass = primary.avg >= 0 ? 'up' : 'down';
     parts.push(`
@@ -935,6 +1110,10 @@ function renderResults() {
         (median ${sPct(primary.median)}). Best case <b class="up">${sPct(primary.best)}</b>,
         worst case <b class="down">${sPct(primary.worst)}</b>.
       </div>`);
+
+    // Monte Carlo robustness + regime breakdown, both off the active occurrences.
+    parts.push(renderMonteCarlo(series.rets));
+    parts.push(renderRegimes(series.events, res.primaryHorizon));
 
     const rows = stats
       .filter((h) => h.n)
