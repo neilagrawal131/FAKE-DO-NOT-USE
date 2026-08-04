@@ -30,6 +30,11 @@ const SIZE_MAX_PCT = Number(process.env.SIZE_MAX_PCT) || 0.02; //  2.0% — hard
 const SIZE_SYMBOL_CAP_PCT = Number(process.env.SIZE_SYMBOL_CAP_PCT) || 0.04; // 4% — max total position in one stock
 const SIZE_STRONG_SCORE = Number(process.env.SIZE_STRONG_SCORE) || 0.25; // reward/risk score that sizes an order to the max
 const SIZE_BASE_SCORE = 0.03; // score at/below which an order is the baseline size
+// Anti-dust: skip an order when the room left (after caps) is below this fraction
+// of equity, and sweep any position that ends up worth less than this in dollars —
+// so a nearly-full sector never spits out $1 "dust" positions.
+const SIZE_MIN_ORDER_PCT = Number(process.env.SIZE_MIN_ORDER_PCT) || 0.001; // 0.1% of equity
+const DUST_MIN_USD = Number(process.env.DUST_MIN_USD) || 20; // close positions worth less than this
 
 // Dollar size for one order given the trade's "strength" (the pattern's
 // reward/risk score): most orders sit near the 0.08% baseline; only strong
@@ -276,9 +281,9 @@ async function runEvaluate(provider) {
     const sec = symbolSector(symbol);
     const target = sec ? sectorTarget(sec) : null;
     if (target != null) room = Math.min(room, target * equity - (exposure[sec] || 0)); // sector cap
-    if (!(room > 1) || !(price > 0)) return 0; // skip sub-$1 dust
-    // Fractional shares, so small (0.08%) percentage orders size exactly regardless
-    // of share price.
+    // Skip when the room left is too small to be a meaningful position (no dust).
+    if (room < Math.max(SIZE_MIN_ORDER_PCT * equity, DUST_MIN_USD) || !(price > 0)) return 0;
+    // Fractional shares, so percentage orders size exactly regardless of price.
     return Math.round((room / price) * 1e6) / 1e6;
   };
   const noteBuy = (symbol, shares, price) => {
@@ -425,7 +430,8 @@ async function runEvaluate(provider) {
     const gain = (price - t.entryPrice) / t.entryPrice;
     const peakGain = (t.peak - t.entryPrice) / t.entryPrice;
     let reason = null;
-    if (gain >= EXIT.targetPct) reason = 'target';
+    if (t.shares * price < DUST_MIN_USD) reason = 'dust'; // clean out meaningless micro-positions
+    else if (gain >= EXIT.targetPct) reason = 'target';
     else if (gain <= -EXIT.stopPct) reason = 'stop';
     else if (peakGain >= EXIT.trailArm && price <= t.peak * (1 - EXIT.trailPct)) reason = 'trail';
     else if (t.exitDueTime != null && nowTs >= t.exitDueTime) reason = 'time';
