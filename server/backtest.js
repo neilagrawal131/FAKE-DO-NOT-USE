@@ -4,7 +4,11 @@
 // aggregates that into "rose X% of the time by Y / fell ...".
 
 import { sectorSymbols, sectorLabel, sectorStyle } from './universe.js';
-import { getDividends } from './marketdb.js';
+import { getDividends, earningsBetween, nextEarnings } from './marketdb.js';
+
+// Don't hold a position through an earnings report (a binary gap risk) unless
+// explicitly disabled. Applied identically in scoring and live entry.
+const AVOID_EARNINGS = process.env.AVOID_EARNINGS !== '0';
 import { describeScenario } from './scenario.js';
 
 // Pick an upstream fetch range big enough for the lookback + MA warmup + horizon.
@@ -209,11 +213,14 @@ export async function simulatePattern(scenario, provider) {
     for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
     const shortMA = movingAverage(bars, ENTRY.maPeriod, 'sma');
     const divs = getDividends(sym); // total-return: dividends held during a trade
+    const barSeconds = intraday ? 1800 : 86400;
     const rets = [];
     for (let i = 1; i < bars.length - 1; i++) {
       if (bars[i].time < cutoff) continue;
       if (!conditionsMet(scenario.conditions, bars, maCache, i)) continue;
       if (!entryOk(bars, i, shortMA)) continue;
+      // Skip entries that would hold through an earnings report.
+      if (AVOID_EARNINGS && earningsBetween(sym, bars[i].time, bars[i].time + H * barSeconds).length) continue;
       rets.push(simulateExit(bars, i, H, ex, divs));
     }
     return rets;
@@ -367,6 +374,12 @@ export async function liveTriggers(scenario, provider) {
     const last = bars.length - 1;
     if (!activeNow(scenario.conditions, bars, maCache, last, FRESH)) return null;
     if (!entryOk(bars, last, shortMA)) return null; // only enter on a pullback, never extended
+    // Don't open a position that would be held through an upcoming earnings report.
+    if (AVOID_EARNINGS) {
+      const now = Math.floor(Date.now() / 1000);
+      const ne = nextEarnings(sym, now);
+      if (ne && ne <= now + H * barSeconds) return null;
+    }
     return {
       symbol: sym,
       barTime: bars[last].time, // dedup key: re-enter only when a new bar forms

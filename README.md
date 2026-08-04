@@ -179,6 +179,13 @@ position across an ex-date** (shown as a `div` entry in the blotter), and the
 Strategist's **backtest scoring is total-return** (dividends paid during a trade
 are added to its result). `GET /api/marketdb/dividends/:symbol` lists them.
 
+**Earnings dates → avoid the gap risk.** An `earnings` table records report dates
+(from Polygon filings). By default the trader **won't hold a position through an
+earnings announcement** — both the backtest scoring and live entries skip a trade
+whose holding window contains an earnings date (live entries project the next date
+~quarterly from the last known one). Set `AVOID_EARNINGS=0` to trade through them.
+`GET /api/marketdb/earnings/:symbol` lists recorded dates.
+
 ### Market-data providers
 
 The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):

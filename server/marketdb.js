@@ -42,6 +42,8 @@ class SqliteStore {
     );
     // Cash dividends: one row per ex-dividend date.
     this.db.exec('CREATE TABLE IF NOT EXISTS dividends (symbol TEXT, ts INTEGER, cash REAL, PRIMARY KEY (symbol, ts));');
+    // Earnings announcement dates.
+    this.db.exec('CREATE TABLE IF NOT EXISTS earnings (symbol TEXT, ts INTEGER, PRIMARY KEY (symbol, ts));');
     this.insert = this.db.prepare('INSERT OR REPLACE INTO bars (symbol, interval, t, o, h, l, c, v) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     this.selRange = this.db.prepare('SELECT t, o, h, l, c, v FROM bars WHERE symbol = ? AND interval = ? AND t BETWEEN ? AND ? ORDER BY t');
     this.selAll = this.db.prepare('SELECT t, o, h, l, c, v FROM bars WHERE symbol = ? AND interval = ? ORDER BY t');
@@ -63,6 +65,15 @@ class SqliteStore {
   }
   dividendsBetween(symbol, from, to) {
     return this.selDivsBetween.all(symbol, from, to).map((r) => ({ ts: r.ts, cash: r.cash }));
+  }
+  getEarnings(symbol) {
+    return (this._selEarn || (this._selEarn = this.db.prepare('SELECT ts FROM earnings WHERE symbol = ? ORDER BY ts'))).all(symbol).map((r) => r.ts);
+  }
+  recordEarning(symbol, ts) {
+    (this._insEarn || (this._insEarn = this.db.prepare('INSERT OR IGNORE INTO earnings (symbol, ts) VALUES (?, ?)'))).run(symbol, ts);
+  }
+  earningsBetween(symbol, from, to) {
+    return (this._selEarnBtw || (this._selEarnBtw = this.db.prepare('SELECT ts FROM earnings WHERE symbol = ? AND ts > ? AND ts <= ? ORDER BY ts'))).all(symbol, from, to).map((r) => r.ts);
   }
   getSplits(symbol) {
     return this.selSplits.all(symbol).map((r) => ({ ts: r.ts, from: r.sfrom, to: r.sto, applied: r.applied === 1 }));
@@ -100,7 +111,8 @@ class SqliteStore {
     const perInt = this.db.prepare('SELECT interval, COUNT(*) n FROM bars GROUP BY interval').all();
     const sp = this.db.prepare('SELECT COUNT(*) n FROM splits').get();
     const dv = this.db.prepare('SELECT COUNT(*) n FROM dividends').get();
-    return { backend: 'sqlite', bars: g.n || 0, symbols: g.syms || 0, from: g.lo || null, to: g.hi || null, byInterval: Object.fromEntries(perInt.map((r) => [r.interval, r.n])), splits: sp.n || 0, dividends: dv.n || 0 };
+    const ea = this.db.prepare('SELECT COUNT(*) n FROM earnings').get();
+    return { backend: 'sqlite', bars: g.n || 0, symbols: g.syms || 0, from: g.lo || null, to: g.hi || null, byInterval: Object.fromEntries(perInt.map((r) => [r.interval, r.n])), splits: sp.n || 0, dividends: dv.n || 0, earnings: ea.n || 0 };
   }
 }
 
@@ -114,6 +126,22 @@ class FileStore {
     this.splits = loadJSON(this.splitsFile, () => ({})) || {}; // { symbol: [{ts,from,to,applied}] }
     this.divsFile = join(dir, '_dividends.json');
     this.divs = loadJSON(this.divsFile, () => ({})) || {}; // { symbol: [{ts,cash}] }
+    this.earnFile = join(dir, '_earnings.json');
+    this.earn = loadJSON(this.earnFile, () => ({})) || {}; // { symbol: [ts, ...] }
+  }
+  getEarnings(symbol) {
+    return (this.earn[symbol] || []).slice();
+  }
+  recordEarning(symbol, ts) {
+    const list = this.earn[symbol] || (this.earn[symbol] = []);
+    if (!list.includes(ts)) {
+      list.push(ts);
+      list.sort((a, b) => a - b);
+      saveJSON(this.earnFile, this.earn);
+    }
+  }
+  earningsBetween(symbol, from, to) {
+    return (this.earn[symbol] || []).filter((ts) => ts > from && ts <= to);
   }
   _saveSplits() {
     saveJSON(this.splitsFile, this.splits);
@@ -221,7 +249,8 @@ class FileStore {
     }
     const splits = Object.values(this.splits).reduce((a, l) => a + l.length, 0);
     const dividends = Object.values(this.divs).reduce((a, l) => a + l.length, 0);
-    return { backend: 'file', bars, symbols: syms.size, files: files.length, splits, dividends };
+    const earnings = Object.values(this.earn).reduce((a, l) => a + l.length, 0);
+    return { backend: 'file', bars, symbols: syms.size, files: files.length, splits, dividends, earnings };
   }
 }
 
@@ -269,6 +298,38 @@ export function recordDividends(symbol, events) {
     n++;
   }
   return n;
+}
+export function getEarnings(symbol) {
+  return store.getEarnings(String(symbol).toUpperCase());
+}
+export function recordEarnings(symbol, events) {
+  const sym = String(symbol).toUpperCase();
+  let n = 0;
+  for (const e of events || []) {
+    const ts = typeof e === 'number' ? e : e.ts;
+    if (!(ts > 0)) continue;
+    store.recordEarning(sym, ts);
+    n++;
+  }
+  return n;
+}
+// Any earnings dates with the announcement in (from, to] — used to avoid holding
+// a backtest trade through earnings.
+export function earningsBetween(symbol, from, to) {
+  return store.earningsBetween(String(symbol).toUpperCase(), from, to);
+}
+// The next earnings date after `afterTs`. If none is known ahead, project forward
+// from the latest known date in ~quarterly (91-day) steps — enough to steer live
+// entries away from an upcoming report.
+export function nextEarnings(symbol, afterTs) {
+  const list = store.getEarnings(String(symbol).toUpperCase());
+  if (!list.length) return null;
+  const ahead = list.find((ts) => ts > afterTs);
+  if (ahead) return ahead;
+  let t = list[list.length - 1];
+  const QUARTER = 91 * 86400;
+  while (t <= afterTs) t += QUARTER;
+  return t;
 }
 
 // Record splits as ALREADY reflected in our stored bars (no adjustment). Called

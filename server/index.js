@@ -12,7 +12,7 @@ import { runBacktest, fetchRange, intradayRange } from './backtest.js';
 import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
 import * as strategist from './strategist.js';
-import { withDatabase, dbStats, dbBackend, getSplits, getDividends } from './marketdb.js';
+import { withDatabase, dbStats, dbBackend, getSplits, getDividends, getEarnings } from './marketdb.js';
 import * as scheduler from './scheduler.js';
 
 // Choose the market-data source:
@@ -421,6 +421,11 @@ app.get('/api/marketdb/dividends/:symbol', (req, res) => {
   );
 });
 
+// Recorded earnings announcement dates for a symbol.
+app.get('/api/marketdb/earnings/:symbol', (req, res) => {
+  res.json(getEarnings(req.params.symbol).map((ts) => new Date(ts * 1000).toISOString().slice(0, 10)));
+});
+
 // --- static frontend ----------------------------------------------------------
 app.use(express.static(join(root, 'public')));
 app.get('*', (req, res) => res.sendFile(join(root, 'public', 'index.html')));
@@ -468,6 +473,11 @@ app.listen(PORT, () => {
     const s = dbStats();
     console.log(`[marketdb] ${dbBackend()} backend · ${s.bars.toLocaleString()} bars stored across ${s.symbols} symbols`);
     // Keep the database current: refresh recent bars + apply corporate actions nightly.
-    scheduler.start(upstreamProvider, HAS_POLYGON ? polygonProvider.splits : null, HAS_POLYGON ? polygonProvider.dividends : null);
+    scheduler.start(
+      upstreamProvider,
+      HAS_POLYGON ? polygonProvider.splits : null,
+      HAS_POLYGON ? polygonProvider.dividends : null,
+      HAS_POLYGON ? polygonProvider.earnings : null
+    );
   }
 });

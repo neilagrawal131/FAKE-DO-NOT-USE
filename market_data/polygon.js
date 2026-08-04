@@ -103,6 +103,23 @@ export async function dividends(symbol) {
     .filter((d) => d.ts > 0 && d.cash > 0);
 }
 
+// Earnings announcement dates for a symbol, taken from the filing dates of its
+// financial reports. Returns [{ ts }] (unix seconds of the report filing).
+export async function earnings(symbol) {
+  const sym = symbol.toUpperCase();
+  const data = await pget(`/vX/reference/financials?ticker=${encodeURIComponent(sym)}&limit=50&order=desc&sort=filing_date`, 24 * 60 * 60 * 1000).catch(() => ({ results: [] }));
+  const seen = new Set();
+  const out = [];
+  for (const r of data.results || []) {
+    const fd = r.filing_date;
+    if (!fd || seen.has(fd)) continue;
+    seen.add(fd);
+    const ts = Math.floor(new Date(`${fd}T00:00:00Z`).getTime() / 1000);
+    if (ts > 0) out.push({ ts });
+  }
+  return out;
+}
+
 // ---- spread modelling (same logic as yahoo.js, kept local for independence) ----
 function normalizeSpread(price, bid, ask) {
   const b = Number.isFinite(bid) && bid > 0 ? bid : null;

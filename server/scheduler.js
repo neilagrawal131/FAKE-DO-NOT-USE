@@ -9,7 +9,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { upsertBars, dbStats, reconcileSplits, recordDividends } from './marketdb.js';
+import { upsertBars, dbStats, reconcileSplits, recordDividends, recordEarnings } from './marketdb.js';
 import { TARGET_SECTORS, sectorSymbols } from './universe.js';
 import { saveJSON, loadJSON } from './store.js';
 
@@ -27,6 +27,7 @@ const WINDOWS = [
 let provider = null;
 let splitsFn = null;
 let divsFn = null;
+let earnFn = null;
 let running = false;
 let timer = null;
 let lastDay = null;
@@ -35,10 +36,11 @@ let lastResult = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const today = () => new Date().toISOString().slice(0, 10);
 
-export function start(activeProvider, fetchSplits = null, fetchDivs = null) {
+export function start(activeProvider, fetchSplits = null, fetchDivs = null, fetchEarnings = null) {
   provider = activeProvider;
   splitsFn = fetchSplits;
   divsFn = fetchDivs;
+  earnFn = fetchEarnings;
   const st = loadJSON(STATE_FILE, () => ({})) || {};
   lastDay = st.lastTopUp || null;
   lastResult = st.lastResult || null;
@@ -90,6 +92,15 @@ async function topUp(trigger = 'manual') {
         recordDividends(sym, await divsFn(sym));
       } catch {
         /* dividends are best-effort */
+      }
+      await sleep(delay);
+    }
+    // Record earnings dates (trades avoid holding through a report).
+    if (earnFn) {
+      try {
+        recordEarnings(sym, await earnFn(sym));
+      } catch {
+        /* earnings are best-effort */
       }
       await sleep(delay);
     }
