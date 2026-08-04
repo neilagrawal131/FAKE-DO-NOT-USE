@@ -157,7 +157,18 @@ export function summarize(priceMap = {}) {
   const positionsValue = positions.reduce((a, p) => a + (p.marketValue ?? p.costBasis), 0);
   const equity = s.cash + positionsValue;
   const totalUnrealized = positions.reduce((a, p) => a + (p.unrealized ?? 0), 0);
-  const dayChange = positions.reduce((a, p) => a + (p.dayChange ?? 0), 0);
+
+  // True daily change: today's equity vs. the account's equity at the start of
+  // the trading day — so it includes realized gains and dividends booked today,
+  // not just open positions drifting since their previous close.
+  const marked = Object.keys(priceMap).length > 0 || positions.length === 0;
+  const day = marketDay();
+  if (marked && (!s.dayAnchor || s.dayAnchor.date !== day)) {
+    s.dayAnchor = { date: day, equity };
+    persist();
+  }
+  const anchorEquity = s.dayAnchor ? s.dayAnchor.equity : equity;
+  const dayChange = equity - anchorEquity;
 
   return {
     cash: s.cash,
@@ -169,9 +180,19 @@ export function summarize(priceMap = {}) {
     totalPnL: equity - s.startingCash,
     totalReturnPct: ((equity - s.startingCash) / s.startingCash) * 100,
     dayChange,
+    dayStartEquity: anchorEquity,
     positions,
     orders: s.orders.slice(0, 100),
   };
+}
+
+// Current trading day in US Eastern time (the day the "today" change resets on).
+function marketDay() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
 }
 
 // Symbols currently held — used by the API to fetch live marks.

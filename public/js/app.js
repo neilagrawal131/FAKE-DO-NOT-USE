@@ -552,6 +552,12 @@ function applyPortfolio(p) {
     <div class="tile">
       <div class="tile-label">Realized P/L</div>
       <div class="tile-value ${signClass(p.realizedPnL)}" style="font-size:15px">${usd(p.realizedPnL)}</div>
+      <div class="tile-sub">booked (closed + dividends)</div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Unrealized P/L</div>
+      <div class="tile-value ${signClass(p.unrealizedPnL)}" style="font-size:15px">${usd(p.unrealizedPnL)}</div>
+      <div class="tile-sub">open positions</div>
     </div>`;
 
   // positions
