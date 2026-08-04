@@ -13,6 +13,7 @@ import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
 import * as strategist from './strategist.js';
 import { withDatabase, dbStats, dbBackend } from './marketdb.js';
+import * as scheduler from './scheduler.js';
 
 // Choose the market-data source:
 //   - polygon  (default when POLYGON_API_KEY is set) — real quotes + deep history
@@ -94,13 +95,14 @@ function cachedProvider(p, ttlMs) {
 }
 
 let yahoo; // the active provider (name kept for minimal churn)
+let upstreamProvider = null; // raw upstream (before DB/cache) — used by the nightly top-up
 if (SOURCE === 'mock') {
   yahoo = mockProvider;
 } else {
-  const upstream = SOURCE === 'polygon' ? withFallback(polygonProvider, yahooProvider) : yahooProvider;
+  upstreamProvider = SOURCE === 'polygon' ? withFallback(polygonProvider, yahooProvider) : yahooProvider;
   // Chain: upstream API -> our database (persist every bar) -> 10s in-memory cache.
   // Backtests read from the database; the upstream is hit only to fill gaps.
-  yahoo = cachedProvider(withDatabase(upstream), MARKET_CACHE_MS);
+  yahoo = cachedProvider(withDatabase(upstreamProvider), MARKET_CACHE_MS);
 }
 
 // Tell the parser how far back intraday analysis can go for this data source.
@@ -386,7 +388,14 @@ app.get('/api/marketdb', (req, res) => {
     ...s,
     fromDate: s.from ? new Date(s.from * 1000).toISOString().slice(0, 10) : null,
     toDate: s.to ? new Date(s.to * 1000).toISOString().slice(0, 10) : null,
+    scheduler: scheduler.status(),
   });
+});
+
+// Trigger a database top-up now (runs off the request path).
+app.post('/api/marketdb/topup', (req, res) => {
+  if (SOURCE === 'mock') return res.status(400).json({ error: 'top-up is unavailable in mock mode' });
+  res.json(scheduler.runNow());
 });
 
 // --- static frontend ----------------------------------------------------------
@@ -435,5 +444,7 @@ app.listen(PORT, () => {
   if (SOURCE !== 'mock') {
     const s = dbStats();
     console.log(`[marketdb] ${dbBackend()} backend · ${s.bars.toLocaleString()} bars stored across ${s.symbols} symbols`);
+    // Keep the database current: refresh the recent bars nightly.
+    scheduler.start(upstreamProvider);
   }
 });

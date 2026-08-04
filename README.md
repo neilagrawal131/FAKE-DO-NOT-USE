@@ -155,6 +155,14 @@ skipped) and **rate-limited** to `--rpm` requests/minute (free tier = 5; it back
 off on a 429), so you can run it overnight. Run it with the server stopped, or let
 them share the DB (SQLite WAL + a busy timeout handle concurrent access).
 
+**Overnight top-up (automatic).** While the server runs, a built-in scheduler
+refreshes the recent end of every symbol's daily + 30-minute history once a day
+(default ~05:00 UTC), so the database stays current on its own. Configure with
+`MARKETDB_TOPUP_HOUR` (UTC hour) and `MARKETDB_TOPUP_RPM`. Trigger one on demand
+with `POST /api/marketdb/topup`; `GET /api/marketdb` reports the schedule and last
+run. (Prefer cron? Point it at `npm run backfill` instead — the built-in scheduler
+only fires while the server is up.)
+
 ### Market-data providers
 
 The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):
