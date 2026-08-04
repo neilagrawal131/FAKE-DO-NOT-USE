@@ -18,7 +18,7 @@
 
 import { simulatePattern } from './backtest.js';
 import { normalizeScenario } from './scenario.js';
-import { TARGET_SECTORS, sectorLabel } from './universe.js';
+import { TARGET_SECTORS, sectorLabel, sectorTarget } from './universe.js';
 import * as aitrader from './aitrader.js';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -302,18 +302,27 @@ function ownedKeySet() {
 async function reconcile() {
   const s = load();
 
-  const ranked = Object.values(s.pool)
-    .filter(qualifies)
-    .sort((a, b) => scoreOf(b) - scoreOf(a));
-  const desired = ranked.slice(0, TARGET_ROSTER); // best patterns to promote into
-  // Hysteresis: a promoted pattern is only rotated out once it falls out of a
-  // WIDER retention band (or stops qualifying), so the roster doesn't thrash on
-  // tiny score changes — which would churn positions.
-  const keepSigs = new Set(ranked.slice(0, TARGET_ROSTER + RETAIN_MARGIN).map((e) => scenarioSig(e.scenario)));
-  const desiredBySig = new Set(desired.map((e) => scenarioSig(e.scenario)));
+  // Allocate roster slots PER SECTOR in proportion to the sector's diversification
+  // target, so every sector is represented and capital spreads to match the target
+  // weights — instead of a few high-scoring sectors monopolizing the whole roster.
+  const perSector = {};
+  for (const e of Object.values(s.pool)) {
+    if (!qualifies(e)) continue;
+    const sec = e.gene.sectorKey;
+    (perSector[sec] || (perSector[sec] = [])).push(e);
+  }
+  const desired = [];
+  const keepSigs = new Set();
+  for (const sec of UNIVERSES) {
+    const slots = Math.max(1, Math.round(TARGET_ROSTER * (sectorTarget(sec) || 0)));
+    const ranked = (perSector[sec] || []).sort((a, b) => scoreOf(b) - scoreOf(a));
+    for (const e of ranked.slice(0, slots)) desired.push(e);
+    // Hysteresis: keep a live pattern until it drops out of a wider per-sector band.
+    const retain = slots + Math.max(2, Math.round(slots * 0.4));
+    for (const e of ranked.slice(0, retain)) keepSigs.add(scenarioSig(e.scenario));
+  }
 
   let owned = ownedStrategies();
-  const ownedSigs = new Set(owned.map((st) => scenarioSig(st.scenario)));
 
   // DEMOTE: owned patterns that dropped out of the retention band. Their open
   // positions RIDE to their scheduled horizon exit (not liquidated) — replacing a
@@ -325,18 +334,13 @@ async function reconcile() {
     }
   }
 
-  // PROMOTE: best patterns not yet live, up to the target roster size.
+  // PROMOTE: the per-sector desired patterns that aren't live yet.
   owned = ownedStrategies();
   const liveSigs = new Set(owned.map((st) => scenarioSig(st.scenario)));
-  let count = owned.length;
   for (const e of desired) {
-    if (count >= TARGET_ROSTER) break;
     if (liveSigs.has(scenarioSig(e.scenario))) continue;
     const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true, STRAT_TRADE, e.stats.score);
-    if (added) {
-      count++;
-      logEvent('promote', e.label, `promoted to live trading — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
-    }
+    if (added) logEvent('promote', e.label, `promoted (${sectorLabel(e.gene.sectorKey)}) — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
   }
 }
 
