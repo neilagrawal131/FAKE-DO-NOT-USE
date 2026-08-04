@@ -119,6 +119,28 @@ DATA_SOURCE=mock npm start
 | `EXIT_TRAIL_PCT` | `0.03`             | Trailing stop — once in profit, sell if price falls this far from its peak. |
 | `EXIT_TRAIL_ARM` | `0.04`             | Arm the trailing stop only after the position is up this much at its peak. |
 
+### Our own market-data database
+
+Every OHLCV bar the app fetches is stored in a local database, so the flow is:
+
+```
+Polygon / Yahoo  ->  marketdb  ->  Dashboard & backtester
+```
+
+Once a bar is stored it's **ours** — backtests read from the database instead of
+re-calling the API, and the store accumulates history over time (daily bars today;
+minute bars, and eventually option chains / news / earnings / macro as those get
+added). The upstream API is hit only to fill gaps or top up recent bars.
+
+- Backend: built-in **`node:sqlite`** when available (Node 22.5+; scales to minute
+  bars), else a zero-dependency per-symbol file store — chosen automatically.
+- Files live under `data/` (`marketdb.sqlite` or `data/marketdb/`) and are
+  gitignored.
+- `GET /api/marketdb` reports how many bars / symbols you own and the date range;
+  the side rail shows a live 🗄 counter.
+- Tuning: `MARKETDB_FETCH_COOLDOWN_MS` (default 1 h) caps how often a given series
+  is topped up from upstream.
+
 ### Market-data providers
 
 The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):

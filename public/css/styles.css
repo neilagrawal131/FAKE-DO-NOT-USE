@@ -64,6 +64,7 @@ input { font-family: inherit; }
 .rail-item.active { color: var(--accent); background: rgba(56, 189, 248, 0.12); border-color: rgba(56,189,248,0.3); }
 .rail-ic { font-size: 20px; line-height: 1; }
 .rail-foot { margin-top: auto; font-size: 9px; color: var(--text-faint); text-align: center; line-height: 1.3; }
+.rail-db { color: var(--up); font-size: 8.5px; }
 
 .views { flex: 1; min-width: 0; }
 .view { display: none; }

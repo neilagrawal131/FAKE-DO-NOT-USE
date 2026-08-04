@@ -643,7 +643,21 @@ function setView(view) {
 async function showConfig() {
   try {
     const cfg = await api('/api/config');
-    $('#rail-source').textContent = cfg.source === 'mock' ? 'demo data' : 'live data';
+    const base = cfg.source === 'mock' ? 'demo data' : 'live data';
+    $('#rail-source').textContent = base;
+    // Show how much data our own market database owns (updates periodically).
+    const paintDb = async () => {
+      try {
+        const db = await api('/api/marketdb');
+        if (db && db.bars > 0) {
+          $('#rail-source').innerHTML = `${base}<br /><span class="rail-db">🗄 ${db.bars.toLocaleString()} bars · ${db.symbols} symbols</span>`;
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    paintDb();
+    setInterval(paintDb, 60_000);
   } catch {
     /* ignore */
   }

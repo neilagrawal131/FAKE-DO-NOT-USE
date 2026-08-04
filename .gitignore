@@ -9,5 +9,8 @@ data/strategist.json
 data/*.bak
 data/*.tmp
 data/*.corrupt
+data/marketdb.sqlite
+data/marketdb.sqlite-*
+data/marketdb/
 aitrader.zip
 *.zip

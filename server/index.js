@@ -12,6 +12,7 @@ import { runBacktest, fetchRange, intradayRange } from './backtest.js';
 import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
 import * as strategist from './strategist.js';
+import { withDatabase, dbStats, dbBackend } from './marketdb.js';
 
 // Choose the market-data source:
 //   - polygon  (default when POLYGON_API_KEY is set) — real quotes + deep history
@@ -93,12 +94,14 @@ function cachedProvider(p, ttlMs) {
 }
 
 let yahoo; // the active provider (name kept for minimal churn)
-if (SOURCE === 'mock') yahoo = mockProvider;
-else if (SOURCE === 'polygon') yahoo = withFallback(polygonProvider, yahooProvider);
-else yahoo = yahooProvider;
-
-// Wrap the live sources in the 10s cache (mock is instant/deterministic — no need).
-if (SOURCE !== 'mock') yahoo = cachedProvider(yahoo, MARKET_CACHE_MS);
+if (SOURCE === 'mock') {
+  yahoo = mockProvider;
+} else {
+  const upstream = SOURCE === 'polygon' ? withFallback(polygonProvider, yahooProvider) : yahooProvider;
+  // Chain: upstream API -> our database (persist every bar) -> 10s in-memory cache.
+  // Backtests read from the database; the upstream is hit only to fill gaps.
+  yahoo = cachedProvider(withDatabase(upstream), MARKET_CACHE_MS);
+}
 
 // Tell the parser how far back intraday analysis can go for this data source.
 setIntradayMaxDays(yahoo.INTRADAY_MAX_DAYS ?? 30);
@@ -376,6 +379,15 @@ app.post(
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.get('/api/config', (req, res) => res.json({ source: SOURCE }));
+// Our market-data database: how many bars we own, across how many symbols.
+app.get('/api/marketdb', (req, res) => {
+  const s = dbStats();
+  res.json({
+    ...s,
+    fromDate: s.from ? new Date(s.from * 1000).toISOString().slice(0, 10) : null,
+    toDate: s.to ? new Date(s.to * 1000).toISOString().slice(0, 10) : null,
+  });
+});
 
 // --- static frontend ----------------------------------------------------------
 app.use(express.static(join(root, 'public')));
@@ -420,4 +432,8 @@ app.listen(PORT, () => {
   strategist.start(yahoo);
   // Execute AI Trader orders on a background timer (off the request path).
   startEngine();
+  if (SOURCE !== 'mock') {
+    const s = dbStats();
+    console.log(`[marketdb] ${dbBackend()} backend · ${s.bars.toLocaleString()} bars stored across ${s.symbols} symbols`);
+  }
 });
