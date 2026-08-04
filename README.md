@@ -163,6 +163,13 @@ with `POST /api/marketdb/topup`; `GET /api/marketdb` reports the schedule and la
 run. (Prefer cron? Point it at `npm run backfill` instead — the built-in scheduler
 only fires while the server is up.)
 
+**Stock splits stay adjusted.** A `splits` table records every corporate action
+(from Polygon). The nightly reconcile back-adjusts stored history for any new
+split — prices × (from/to), volume × (to/from) — so a 2:1 split doesn't show up as
+a −50% crash and wreck backtests. It's applied exactly once per split (backfilled
+bars, which arrive already adjusted, are seeded so they're never double-adjusted).
+`GET /api/marketdb/splits/:symbol` lists what's recorded.
+
 ### Market-data providers
 
 The backend talks to a pluggable provider (`server/index.js` → `SOURCE`):

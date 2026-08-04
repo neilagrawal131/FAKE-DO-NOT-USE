@@ -83,6 +83,16 @@ export async function barsBetween(symbol, fromDate, toDate, { multiplier = 1, ti
   return out;
 }
 
+// Stock splits for a symbol (corporate actions). Returns [{ ts, from, to }] where
+// `ts` is the execution date (unix seconds) and a 2:1 split is { from: 1, to: 2 }.
+export async function splits(symbol) {
+  const sym = symbol.toUpperCase();
+  const data = await pget(`/v3/reference/splits?ticker=${encodeURIComponent(sym)}&limit=1000&order=asc`, 24 * 60 * 60 * 1000).catch(() => ({ results: [] }));
+  return (data.results || [])
+    .map((r) => ({ ts: Math.floor(new Date(`${r.execution_date}T00:00:00Z`).getTime() / 1000), from: Number(r.split_from), to: Number(r.split_to) }))
+    .filter((s) => s.ts > 0 && s.from > 0 && s.to > 0);
+}
+
 // ---- spread modelling (same logic as yahoo.js, kept local for independence) ----
 function normalizeSpread(price, bid, ask) {
   const b = Number.isFinite(bid) && bid > 0 ? bid : null;

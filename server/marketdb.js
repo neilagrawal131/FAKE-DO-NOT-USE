@@ -36,9 +36,35 @@ class SqliteStore {
     this.db.exec(
       'CREATE TABLE IF NOT EXISTS bars (symbol TEXT, interval TEXT, t INTEGER, o REAL, h REAL, l REAL, c REAL, v REAL, PRIMARY KEY (symbol, interval, t));'
     );
+    // Corporate actions: one row per stock split we know about.
+    this.db.exec(
+      'CREATE TABLE IF NOT EXISTS splits (symbol TEXT, ts INTEGER, sfrom REAL, sto REAL, applied INTEGER DEFAULT 0, PRIMARY KEY (symbol, ts));'
+    );
     this.insert = this.db.prepare('INSERT OR REPLACE INTO bars (symbol, interval, t, o, h, l, c, v) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     this.selRange = this.db.prepare('SELECT t, o, h, l, c, v FROM bars WHERE symbol = ? AND interval = ? AND t BETWEEN ? AND ? ORDER BY t');
     this.selAll = this.db.prepare('SELECT t, o, h, l, c, v FROM bars WHERE symbol = ? AND interval = ? ORDER BY t');
+    this.selSplits = this.db.prepare('SELECT ts, sfrom, sto, applied FROM splits WHERE symbol = ? ORDER BY ts');
+    this.insSplit = this.db.prepare('INSERT OR IGNORE INTO splits (symbol, ts, sfrom, sto, applied) VALUES (?, ?, ?, ?, ?)');
+    this.getApplied = this.db.prepare('SELECT applied FROM splits WHERE symbol = ? AND ts = ?');
+    this.setApplied = this.db.prepare('UPDATE splits SET applied = 1 WHERE symbol = ? AND ts = ?');
+    // Back-adjust every stored bar before a split: prices x priceMul, volume x volMul.
+    this.adjust = this.db.prepare('UPDATE bars SET o = o * ?, h = h * ?, l = l * ?, c = c * ?, v = v * ? WHERE symbol = ? AND t < ?');
+  }
+  getSplits(symbol) {
+    return this.selSplits.all(symbol).map((r) => ({ ts: r.ts, from: r.sfrom, to: r.sto, applied: r.applied === 1 }));
+  }
+  recordSplit(symbol, ts, from, to, applied) {
+    this.insSplit.run(symbol, ts, from, to, applied ? 1 : 0);
+  }
+  splitApplied(symbol, ts) {
+    const r = this.getApplied.get(symbol, ts);
+    return r ? r.applied === 1 : false;
+  }
+  markSplitApplied(symbol, ts) {
+    this.setApplied.run(symbol, ts);
+  }
+  adjustBars(symbol, beforeTs, priceMul, volMul) {
+    this.adjust.run(priceMul, priceMul, priceMul, priceMul, volMul, symbol, beforeTs);
   }
   getBars(symbol, interval, from, to) {
     const rows = from == null || to == null ? this.selAll.all(symbol, interval) : this.selRange.all(symbol, interval, from, to);
@@ -58,7 +84,8 @@ class SqliteStore {
   stats() {
     const g = this.db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT symbol) syms, MIN(t) lo, MAX(t) hi FROM bars').get();
     const perInt = this.db.prepare('SELECT interval, COUNT(*) n FROM bars GROUP BY interval').all();
-    return { backend: 'sqlite', bars: g.n || 0, symbols: g.syms || 0, from: g.lo || null, to: g.hi || null, byInterval: Object.fromEntries(perInt.map((r) => [r.interval, r.n])) };
+    const sp = this.db.prepare('SELECT COUNT(*) n FROM splits').get();
+    return { backend: 'sqlite', bars: g.n || 0, symbols: g.syms || 0, from: g.lo || null, to: g.hi || null, byInterval: Object.fromEntries(perInt.map((r) => [r.interval, r.n])), splits: sp.n || 0 };
   }
 }
 
@@ -68,6 +95,59 @@ class FileStore {
     this.dir = dir;
     this.cache = new Map();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    this.splitsFile = join(dir, '_splits.json');
+    this.splits = loadJSON(this.splitsFile, () => ({})) || {}; // { symbol: [{ts,from,to,applied}] }
+  }
+  _saveSplits() {
+    saveJSON(this.splitsFile, this.splits);
+  }
+  _intervals(symbol) {
+    let files = [];
+    try {
+      files = readdirSync(this.dir).filter((f) => f.startsWith(`${symbol}__`) && f.endsWith('.json'));
+    } catch {
+      /* none */
+    }
+    return files.map((f) => f.replace(/\.json$/, '').split('__')[1]);
+  }
+  getSplits(symbol) {
+    return (this.splits[symbol] || []).map((s) => ({ ...s }));
+  }
+  recordSplit(symbol, ts, from, to, applied) {
+    const list = this.splits[symbol] || (this.splits[symbol] = []);
+    if (!list.some((s) => s.ts === ts)) {
+      list.push({ ts, from, to, applied: !!applied });
+      list.sort((a, b) => a.ts - b.ts);
+      this._saveSplits();
+    }
+  }
+  splitApplied(symbol, ts) {
+    const s = (this.splits[symbol] || []).find((x) => x.ts === ts);
+    return s ? !!s.applied : false;
+  }
+  markSplitApplied(symbol, ts) {
+    const s = (this.splits[symbol] || []).find((x) => x.ts === ts);
+    if (s) {
+      s.applied = true;
+      this._saveSplits();
+    }
+  }
+  adjustBars(symbol, beforeTs, priceMul, volMul) {
+    for (const interval of this._intervals(symbol)) {
+      const arr = this._load(symbol, interval);
+      let changed = false;
+      for (const b of arr) {
+        if (b.time < beforeTs) {
+          b.open *= priceMul;
+          b.high *= priceMul;
+          b.low *= priceMul;
+          b.close *= priceMul;
+          b.volume = (b.volume || 0) * volMul;
+          changed = true;
+        }
+      }
+      if (changed) saveJSON(this._path(symbol, interval), arr);
+    }
   }
   _path(symbol, interval) {
     return join(this.dir, `${symbol}__${interval}.json`);
@@ -106,7 +186,8 @@ class FileStore {
       const [s, i] = f.replace(/\.json$/, '').split('__');
       bars += this._load(s, i).length;
     }
-    return { backend: 'file', bars, symbols: syms.size, files: files.length };
+    const splits = Object.values(this.splits).reduce((a, l) => a + l.length, 0);
+    return { backend: 'file', bars, symbols: syms.size, files: files.length, splits };
   }
 }
 
@@ -133,6 +214,39 @@ export function dbStats() {
 }
 export function dbBackend() {
   return backendName;
+}
+export function getSplits(symbol) {
+  return store.getSplits(String(symbol).toUpperCase());
+}
+
+// Record splits as ALREADY reflected in our stored bars (no adjustment). Called
+// after we fetch a full adjusted history (backfill), so a later reconcile won't
+// double-adjust bars that already account for these splits.
+export function seedSplits(symbol, events) {
+  const sym = String(symbol).toUpperCase();
+  for (const e of events || []) {
+    if (!(e.ts > 0) || !(e.from > 0) || !(e.to > 0)) continue;
+    store.recordSplit(sym, e.ts, e.from, e.to, true);
+    store.markSplitApplied(sym, e.ts);
+  }
+}
+
+// Apply any not-yet-applied splits to our stored bars so history stays adjusted:
+// every bar before a split's date is back-adjusted (prices x from/to, volume x
+// to/from). Returns the list of splits newly applied.
+export function reconcileSplits(symbol, events) {
+  const sym = String(symbol).toUpperCase();
+  const applied = [];
+  for (const e of events || []) {
+    if (!(e.ts > 0) || !(e.from > 0) || !(e.to > 0)) continue;
+    store.recordSplit(sym, e.ts, e.from, e.to, false);
+    if (!store.splitApplied(sym, e.ts)) {
+      store.adjustBars(sym, e.ts, e.from / e.to, e.to / e.from);
+      store.markSplitApplied(sym, e.ts);
+      applied.push(e);
+    }
+  }
+  return applied;
 }
 
 // ---- provider wrapper: read from the DB, fetch-and-store on a miss -----------

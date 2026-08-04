@@ -9,7 +9,7 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { upsertBars, dbStats } from './marketdb.js';
+import { upsertBars, dbStats, reconcileSplits } from './marketdb.js';
 import { TARGET_SECTORS, sectorSymbols } from './universe.js';
 import { saveJSON, loadJSON } from './store.js';
 
@@ -25,6 +25,7 @@ const WINDOWS = [
 ];
 
 let provider = null;
+let splitsFn = null;
 let running = false;
 let timer = null;
 let lastDay = null;
@@ -33,8 +34,9 @@ let lastResult = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const today = () => new Date().toISOString().slice(0, 10);
 
-export function start(activeProvider) {
+export function start(activeProvider, fetchSplits = null) {
   provider = activeProvider;
+  splitsFn = fetchSplits;
   const st = loadJSON(STATE_FILE, () => ({})) || {};
   lastDay = st.lastTopUp || null;
   lastResult = st.lastResult || null;
@@ -63,8 +65,23 @@ async function topUp(trigger = 'manual') {
   const delay = Math.max(0, Math.ceil(60000 / Math.max(1, TOPUP_RPM)));
   let refreshed = 0;
   let errors = 0;
+  let splitsApplied = 0;
   console.log(`[scheduler] ${trigger} top-up starting · ${symbols.length} symbols`);
   for (const sym of symbols) {
+    // Corporate actions first: back-adjust stored bars for any new split BEFORE
+    // we refetch the recent window (which arrives already split-adjusted).
+    if (splitsFn) {
+      try {
+        const applied = reconcileSplits(sym, await splitsFn(sym));
+        if (applied.length) {
+          splitsApplied += applied.length;
+          console.log(`[scheduler] ${sym}: adjusted history for ${applied.length} split(s)`);
+        }
+      } catch {
+        /* splits are best-effort */
+      }
+      await sleep(delay);
+    }
     for (const [range, interval] of WINDOWS) {
       try {
         const data = await provider.chart(sym, range, interval);
@@ -80,9 +97,9 @@ async function topUp(trigger = 'manual') {
   }
   running = false;
   const s = dbStats();
-  lastResult = { day: startedAt, trigger, symbols: symbols.length, refreshed, errors, bars: s.bars, at: Math.floor(Date.now() / 1000) };
+  lastResult = { day: startedAt, trigger, symbols: symbols.length, refreshed, errors, splitsApplied, bars: s.bars, at: Math.floor(Date.now() / 1000) };
   saveJSON(STATE_FILE, { lastTopUp: lastDay, lastResult });
-  console.log(`[scheduler] top-up done · ${refreshed} series refreshed · ${errors} errors · db ${s.bars.toLocaleString()} bars`);
+  console.log(`[scheduler] top-up done · ${refreshed} series · ${splitsApplied} split adjustments · ${errors} errors · db ${s.bars.toLocaleString()} bars`);
   return lastResult;
 }
 

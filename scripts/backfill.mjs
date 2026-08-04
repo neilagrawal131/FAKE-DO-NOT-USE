@@ -13,7 +13,7 @@
 
 import '../server/loadenv.js';
 import * as polygon from '../market_data/polygon.js';
-import { getBars, upsertBars, dbStats, dbBackend } from '../server/marketdb.js';
+import { getBars, upsertBars, dbStats, dbBackend, seedSplits } from '../server/marketdb.js';
 import { aggregateBars } from '../server/aggregate.js';
 import { TARGET_SECTORS, sectorSymbols } from '../server/universe.js';
 
@@ -90,6 +90,13 @@ for (let si = 0; si < symbols.length; si++) {
   // requests 30m) reads deep history straight from our database.
   const all1m = getBars(sym, '1m', startTs, nowTs);
   if (all1m.length) upsertBars(sym, '30m', aggregateBars(all1m, { seconds: 1800 }));
+  // The bars we just fetched are already split-adjusted, so record this symbol's
+  // known splits as applied — a later reconcile must not adjust them again.
+  try {
+    seedSplits(sym, await polygon.splits(sym));
+  } catch {
+    /* splits are best-effort */
+  }
   const st = dbStats();
   console.log(`[${si + 1}/${symbols.length}] ${sym.padEnd(6)} · 1m ${all1m.length.toLocaleString().padStart(9)} · db total ${st.bars.toLocaleString()} bars`);
 }
