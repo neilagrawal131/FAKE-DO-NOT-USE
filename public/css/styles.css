@@ -648,6 +648,25 @@ input { font-family: inherit; }
 .mc-bar.pos { background: var(--up); }
 .mc-bar.neg { background: var(--down); }
 
+/* Out-of-sample (walk-forward) validation */
+.wf-cta .wf-intro { font-size: 13px; color: var(--text-dim); line-height: 1.55; margin: 0 0 14px; max-width: 760px; }
+.wf-loading { font-size: 13px; color: var(--text-dim); padding: 10px 2px; }
+.wf-hint { color: var(--text-faint); font-weight: 400; font-size: 11px; }
+.wf-verdict { border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; border: 1px solid var(--border); }
+.wf-verdict-head { font-size: 17px; font-weight: 750; margin-bottom: 4px; }
+.wf-verdict-sub { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+.wf-verdict.wf-pass { background: rgba(38,166,154,.10); border-color: rgba(38,166,154,.45); }
+.wf-verdict.wf-pass .wf-verdict-head { color: var(--up); }
+.wf-verdict.wf-warn { background: rgba(255,183,77,.10); border-color: rgba(255,183,77,.45); }
+.wf-verdict.wf-warn .wf-verdict-head { color: #ffb74d; }
+.wf-verdict.wf-fail { background: rgba(239,83,80,.10); border-color: rgba(239,83,80,.45); }
+.wf-verdict.wf-fail .wf-verdict-head { color: var(--down); }
+.wf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 6px; }
+.wf-sub { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .4px; margin: 18px 0 8px; }
+.wf-compare td:nth-child(2) { color: var(--text-dim); }
+.wf-compare .wf-oos { font-weight: 700; color: var(--text); }
+.wf-cost-note { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; margin-top: 12px; }
+
 /* Regime breakdown — stacked full-width tables (like the horizon table) so every
    column stays readable rather than cramming three tables into one row. */
 .regime-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }

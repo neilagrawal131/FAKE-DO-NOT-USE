@@ -178,16 +178,20 @@ in `aitrader.js`.
 This is the go/no-go section. **Do not fund live until all of these pass.**
 
 **6.1 Statistical edge on real data (not mock):**
-- [ ] Re-run the strategy on **real** historical data with realistic **costs +
-      slippage** baked in
-- [ ] **Out-of-sample / walk-forward**: optimize on one window, test on the next,
-      roll forward. The gene-pool + hill-climbing is prone to **overfitting** —
-      an in-sample Sharpe means nothing.
-- [ ] Use the new quant panel: positive **cost-adjusted** mean, Sharpe/Sortino
-      that survive out-of-sample, **Monte Carlo** probability-of-profit well above
-      50%, and acceptable drawdown percentiles
-- [ ] Check **regime** breakdown — an edge that only exists in one regime must be
-      gated to that regime, not run blind
+- [x] **Walk-forward / out-of-sample harness built** (`server/walkforward.js`,
+      `server/costs.js`; `POST /api/walkforward`; "Run out-of-sample validation"
+      in the AI Analyst). Tunes the hold horizon on each train window, tests it on
+      the next unseen window rolling forward, subtracts realistic costs
+      (commission + spread + slippage) from every trade, and reports in-sample vs
+      out-of-sample side by side with a plain verdict. _Still to do: run it on
+      **real** Polygon data (blocked in this environment) — it currently proves
+      out on mock, where it correctly finds no edge._
+- [x] Judges on the shared quant panel (Sharpe/Sortino/Monte Carlo) computed on
+      the **out-of-sample** returns only, with the same stats module the Analyst uses.
+- [ ] Feed the autonomous Strategist's promotion decision from the **out-of-sample**
+      score, not the in-sample one (today it promotes on in-sample score).
+- [ ] Check **regime** breakdown per pattern — an edge that only exists in one
+      regime must be gated to that regime, not run blind.
 
 **6.2 Paper-trade live (same code path, paper account):**
 - [ ] Run the full stack against the **IBKR paper account** for an extended period
@@ -245,7 +249,7 @@ This is the go/no-go section. **Do not fund live until all of these pass.**
 |---|---|---|
 | **0. Plumbing** _(in progress)_ | `Broker` interface, order state machine, idempotency ✅; reconciliation, `RiskEngine`, and routing execution through the broker — all against **PaperBroker** | Full order lifecycle + kill switch proven in paper; risk checks reject correctly |
 | **1. IBKR paper** | Wire `IbkrBroker` to the **paper** account; run the whole stack live-but-paper | 3–6 months / hundreds of trades; slippage measured; ops (restart, alerts, re-auth) solid |
-| **2. Edge validation** | Cost-adjusted, out-of-sample, walk-forward proof using the quant panel | **Go/no-go gate.** Positive cost-adjusted edge that survives OOS + Monte Carlo, or **STOP** |
+| **2. Edge validation** _(harness ✅, needs real data)_ | Cost-adjusted, out-of-sample, walk-forward proof using the quant panel | **Go/no-go gate.** Positive cost-adjusted edge that survives OOS + Monte Carlo, or **STOP** |
 | **3. Canary live** | Micro-size real money, one strategy, supervised | Realized results match paper within tolerance |
 | **4. Scale-up** | Grow size gradually; add strategies only after each proves out live | Each addition passes Phase 2 individually before it can size up |
 

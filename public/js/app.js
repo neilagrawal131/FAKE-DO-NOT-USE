@@ -849,6 +849,8 @@ const EV_DISPLAY_CAP = 300;
 function renderAnalysis(res) {
   analysis.res = res;
   analysis.removed = new Set();
+  analysis.wf = null; // out-of-sample validation is run on demand per analysis
+  analysis.wfLoading = false;
   renderResults();
 }
 
@@ -1052,6 +1054,153 @@ function renderRegimes(events, H) {
     </div>`;
 }
 
+// ---- Out-of-sample (walk-forward) validation --------------------------------
+const wfDate = (sec) => (sec ? new Date(sec * 1000).toISOString().slice(0, 10) : '—');
+
+function renderWalkForwardSection() {
+  if (analysis.wfLoading) {
+    return `<div class="result-block">
+      <h3>Out-of-sample validation</h3>
+      <div class="wf-loading">⏳ Running walk-forward across full history with realistic costs — scanning every name and rolling through train/test windows. This can take a moment…</div>
+    </div>`;
+  }
+  if (analysis.wf) return renderWalkForward(analysis.wf);
+  return `<div class="result-block wf-cta">
+    <h3>Out-of-sample validation <span class="ev-hint">— the honest test: does this edge survive on unseen data, after costs?</span></h3>
+    <p class="wf-intro">The statistics above are <b>in-sample</b> — measured on the same history the pattern was found in, with no trading costs. This runs a <b>walk-forward</b> test: it tunes the best hold horizon on a training window, then measures that choice on the <b>next, unseen</b> window — rolling forward through time — with commission, spread and slippage subtracted from every trade. Only the unseen results count.</p>
+    <button class="btn-primary run-walkforward" id="run-walkforward" style="width:auto;padding:10px 18px">🔬 Run out-of-sample validation</button>
+  </div>`;
+}
+
+async function runWalkForward() {
+  analysis.wfLoading = true;
+  renderResults();
+  try {
+    analysis.wf = await api('/api/walkforward', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: analysis.res.scenario }),
+    });
+  } catch (e) {
+    analysis.wf = { error: e.message };
+  } finally {
+    analysis.wfLoading = false;
+    renderResults();
+  }
+}
+
+function wfCompareRow(label, inVal, outVal, hint) {
+  return `<tr><td>${label}${hint ? ` <span class="wf-hint">${hint}</span>` : ''}</td><td>${inVal}</td><td class="wf-oos">${outVal}</td></tr>`;
+}
+
+function renderWalkForward(wf) {
+  if (wf.error) {
+    const msg =
+      wf.error === 'no_data'
+        ? 'Not enough history for these symbols to run a walk-forward test.'
+        : `Walk-forward failed: ${escapeHtml(wf.error)}`;
+    return `<div class="result-block"><h3>Out-of-sample validation</h3><div class="no-results">${msg}</div>
+      <button class="btn-primary run-walkforward" id="run-walkforward" style="width:auto;padding:8px 16px;margin-top:10px">Try again</button></div>`;
+  }
+  const oos = wf.oosReturns || [];
+  const is = wf.isReturns || [];
+  const gross = wf.grossOosReturns || [];
+  const c = wf.config || {};
+  const costPct = wf.roundTripCostPct ?? 0;
+
+  if (oos.length < 10) {
+    return `<div class="result-block">
+      <h3>Out-of-sample validation</h3>
+      <div class="no-results">Inconclusive — only <b>${oos.length}</b> out-of-sample trade${oos.length === 1 ? '' : 's'} across ${wf.folds ? wf.folds.length : 0} window(s). Widen the universe or lengthen the history for a meaningful test.</div>
+    </div>`;
+  }
+
+  const so = fullStats(oos, oos);
+  const si = fullStats(is, is);
+  const sg = fullStats(gross, gross);
+  const mc = monteCarlo(oos, { runs: 1000 });
+  const costDrag = sg.mean - so.mean;
+
+  // Verdict — honest, cost- and out-of-sample-aware.
+  let verdict;
+  let vcls;
+  let vsub;
+  if (so.mean > 0 && mc && mc.pProfit >= 60) {
+    verdict = '✓ Edge survives out-of-sample';
+    vcls = 'wf-pass';
+    vsub = 'Positive after costs on unseen data, and robust across resampling. Rare — worth validating further on a live paper account before funding.';
+  } else if (so.mean > 0) {
+    verdict = '~ Marginal / unproven';
+    vcls = 'wf-warn';
+    vsub = 'Barely positive out-of-sample after costs, but not robust to bad luck. Treat as noise until it proves out on more data.';
+  } else {
+    verdict = '✗ No edge survives costs + out-of-sample';
+    vcls = 'wf-fail';
+    vsub = 'On unseen data, after realistic costs, this loses money on average. The in-sample results were overfitting — do not fund this.';
+  }
+
+  const foldRows = (wf.folds || [])
+    .map(
+      (f) => `<tr>
+        <td>${wfDate(f.testFrom)} → ${wfDate(f.testTo)}</td>
+        <td>${hzLabel(f.horizon)}</td>
+        <td>${f.nTrain}</td>
+        <td>${f.nTest}</td>
+        <td class="${signClass(f.oosMean)}">${f.oosMean == null ? '—' : sPct(f.oosMean)}</td>
+      </tr>`
+    )
+    .join('');
+
+  return `
+    <div class="result-block wf-result">
+      <h3>Out-of-sample validation <span class="ev-hint">— walk-forward, costs included · the number that actually matters</span></h3>
+
+      <div class="wf-verdict ${vcls}">
+        <div class="wf-verdict-head">${verdict}</div>
+        <div class="wf-verdict-sub">${vsub}</div>
+      </div>
+
+      <div class="wf-grid">
+        ${qstat('Out-of-sample avg', sPct(so.mean), signClass(so.mean), 'per trade, after costs')}
+        ${qstat('OOS Sharpe', so.sharpe.toFixed(2), signClass(so.sharpe), 'reward ÷ risk')}
+        ${qstat('OOS profit factor', fmtPF(so.profitFactor), so.profitFactor >= 1 ? 'up' : 'down')}
+        ${qstat('OOS win rate', pctOnly(so.winRate))}
+        ${qstat('OOS trades', so.n, '', `${wf.folds ? wf.folds.length : 0} test windows`)}
+        ${mc ? qstat('MC profitable', mc.pProfit.toFixed(0) + '%', mc.pProfit >= 60 ? 'up' : 'down', 'of 1,000 resamples') : ''}
+      </div>
+
+      <h4 class="wf-sub">In-sample vs out-of-sample <span class="wf-hint">— the gap is the overfitting</span></h4>
+      <div style="overflow-x:auto"><table class="h-table wf-compare">
+        <thead><tr><th>Metric</th><th>In-sample</th><th>Out-of-sample</th></tr></thead>
+        <tbody>
+          ${wfCompareRow('Trades', si.n, so.n)}
+          ${wfCompareRow('Avg return', sPct(si.mean), sPct(so.mean))}
+          ${wfCompareRow('Median return', sPct(si.median), sPct(so.median))}
+          ${wfCompareRow('Win rate', pctOnly(si.winRate), pctOnly(so.winRate))}
+          ${wfCompareRow('Sharpe', si.sharpe.toFixed(2), so.sharpe.toFixed(2))}
+          ${wfCompareRow('Sortino', si.sortino.toFixed(2), so.sortino.toFixed(2))}
+          ${wfCompareRow('Profit factor', fmtPF(si.profitFactor), fmtPF(so.profitFactor))}
+          ${wfCompareRow('Max drawdown', si.maxDrawdown.toFixed(1) + '%', so.maxDrawdown.toFixed(1) + '%')}
+        </tbody>
+      </table></div>
+
+      <div class="wf-cost-note">
+        <b>Cost impact:</b> commission ${wf.costs.commissionBps} bp + spread ${wf.costs.spreadBps} bp + slippage ${wf.costs.slippageBps} bp
+        = <b>${(costPct).toFixed(2)}%</b> round-trip per trade. That drops the out-of-sample average from
+        <b class="${signClass(sg.mean)}">${sPct(sg.mean)}</b> (gross) to
+        <b class="${signClass(so.mean)}">${sPct(so.mean)}</b> (net).
+      </div>
+
+      <h4 class="wf-sub">Per test window <span class="wf-hint">— each row is unseen data; horizon was tuned on the prior window</span></h4>
+      <div style="overflow-x:auto"><table class="h-table">
+        <thead><tr><th>Test window</th><th>Horizon</th><th>Train trades</th><th>OOS trades</th><th>OOS avg</th></tr></thead>
+        <tbody>${foldRows}</tbody>
+      </table></div>
+
+      <div class="disclaimer-sm">Walk-forward: train ${c.trainDays}d → test ${c.testDays}d, rolling; horizons tuned in-sample from ${(c.horizons || []).map((h) => hzLabel(h)).join(', ')}. Universe: ${wf.universe.symbolsWithData}/${wf.universe.symbolsRequested} ${escapeHtml(wf.universe.label || '')}. Costs and slippage are modeled estimates. Past performance does not predict future results.</div>
+    </div>`;
+}
+
 function renderResults() {
   const res = analysis.res;
   const out = $('#analyst-results');
@@ -1080,6 +1229,8 @@ function renderResults() {
     parts.push(
       `<button class="btn-primary add-to-trader" id="add-to-trader" style="width:auto;padding:10px 18px">🦾 Add this pattern to the AI Trader</button>`
     );
+    // The honest test: out-of-sample validation with realistic costs.
+    parts.push(renderWalkForwardSection());
   }
 
   const events = activeEvents();
@@ -1193,6 +1344,10 @@ function renderResults() {
 function onResultsClick(e) {
   if (e.target.closest('#add-to-trader')) {
     addPatternToTrader();
+    return;
+  }
+  if (e.target.closest('.run-walkforward')) {
+    runWalkForward();
     return;
   }
   const removeBtn = e.target.closest('.ev-remove');

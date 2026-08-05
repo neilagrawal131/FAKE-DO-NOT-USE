@@ -9,6 +9,7 @@ import * as portfolio from './portfolio.js';
 import { aggregateBars } from './aggregate.js';
 import { parseScenario, normalizeScenario, setIntradayMaxDays } from './scenario.js';
 import { runBacktest, fetchRange, intradayRange } from './backtest.js';
+import { walkForward } from './walkforward.js';
 import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
 import * as strategist from './strategist.js';
@@ -259,6 +260,24 @@ app.post(
     }
     const result = await runBacktest(scenario, yahoo);
     res.json({ ...result, warnings });
+  })
+);
+
+// Walk-forward / out-of-sample validation with realistic costs. Same scenario
+// parsing as /api/analyze; returns raw in-sample vs out-of-sample return arrays
+// (client computes the quant panel on both with the shared stats module).
+app.post(
+  '/api/walkforward',
+  wrap(async (req, res) => {
+    const { query, scenario: override, config } = req.body || {};
+    let scenario;
+    if (override && Array.isArray(override.conditions)) {
+      scenario = normalizeScenario(override);
+    } else {
+      scenario = parseScenario(query || '').scenario;
+    }
+    const result = await walkForward(scenario, yahoo, config || {});
+    res.json({ ...result, scenario });
   })
 );
 

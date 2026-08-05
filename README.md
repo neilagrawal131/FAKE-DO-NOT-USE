@@ -222,6 +222,8 @@ server/
   mock.js       Synthetic provider (same interface) for offline mode
   portfolio.js  Paper-trading account, persisted to data/portfolio.json
   broker/       Broker abstraction (paper today, IBKR-ready) — see docs/GOING_LIVE.md
+  walkforward.js  Out-of-sample / walk-forward validation engine
+  costs.js      Realistic trading-cost model (commission + spread + slippage)
 public/
   index.html    Single-page UI
   js/app.js     UI logic (search, detail, trading, portfolio)
@@ -242,6 +244,7 @@ public/
 | POST   | `/api/portfolio/reset`   | Reset to $100k cash                      |
 | GET    | `/api/sectors`           | Sector universes for the AI Analyst      |
 | POST   | `/api/analyze`           | `{ query }` — backtest a plain-English scenario |
+| POST   | `/api/walkforward`       | `{ query }` — walk-forward, out-of-sample, cost-adjusted validation |
 | GET    | `/api/aitrader`          | AI Trader account, patterns and trade log |
 | POST   | `/api/aitrader/strategies` | `{ scenario }` — add a pattern to the AI Trader |
 | POST   | `/api/aitrader/strategies/:id/toggle` | Enable/disable a pattern         |
@@ -276,6 +279,17 @@ that stock around the trigger (with the relevant moving average, a Trigger
 marker at entry and the exit N days later), or hit **×** to remove it — the
 verdict, horizon table and averages recompute instantly (client-side), with
 "restore all" to bring removed occurrences back.
+
+Alongside the in-sample stats, each result offers **quantitative research**
+(event statistics — Sharpe, Sortino, profit factor, drawdown, 95% CI —
+Monte Carlo, and per-regime breakdown) and, most importantly, a **Run
+out-of-sample validation** button. That runs a **walk-forward** test: it tunes
+the hold horizon on a training window, measures that choice on the next
+**unseen** window rolling forward through time, subtracts realistic costs
+(commission + spread + slippage) from every trade, and shows in-sample vs
+out-of-sample side by side with a plain verdict. In-sample results are how
+strategies fool you; the out-of-sample number is the one that matters. See
+**docs/GOING_LIVE.md §6**.
 
 ### Testing
 

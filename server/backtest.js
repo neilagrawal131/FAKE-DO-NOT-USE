@@ -277,6 +277,68 @@ export async function simulatePattern(scenario, provider) {
   return { returns: withData.flat(), symbolsWithData: withData.length };
 }
 
+// --- shared series loader + windowed scanner (used by walk-forward) ----------
+// Load each universe symbol's bars ONCE over the maximum available history, with
+// the moving averages the scenario needs precomputed. Walk-forward then slices
+// this in memory across many train/test windows instead of re-fetching per fold.
+export async function loadUniverseSeries(scenario, provider) {
+  const symbols = scenario.symbol ? [scenario.symbol] : sectorSymbols(scenario.sectorKey);
+  const intraday = scenario.timeframe === 'intraday';
+  const interval = intraday ? '30m' : '1d';
+  const range = intraday ? intradayRange(99999) : fetchRange(99999); // as much history as the source serves
+  const barSeconds = intraday ? 1800 : 86400;
+  const maDefs = scenario.conditions
+    .filter((c) => c.kind === 'ma_cross' || c.kind === 'ma_state')
+    .map((c) => ({ key: maKey(c), period: c.period, type: c.maType }));
+
+  const per = await mapLimit(symbols, 6, async (sym) => {
+    const bars = cleanBars(await provider.chart(sym, range, interval));
+    if (bars.length < 60) return null;
+    const maCache = new Map();
+    for (const d of maDefs) if (!maCache.has(d.key)) maCache.set(d.key, movingAverage(bars, d.period, d.type));
+    const shortMA = movingAverage(bars, ENTRY.maPeriod, 'sma');
+    let divs = [];
+    try {
+      divs = getDividends(sym);
+    } catch {
+      divs = [];
+    }
+    return { sym, bars, maCache, shortMA, divs };
+  });
+
+  const series = per.filter(Boolean);
+  return {
+    interval,
+    intraday,
+    barSeconds,
+    series,
+    symbolsRequested: symbols.length,
+    symbolsWithData: series.length,
+  };
+}
+
+// Every trade the pattern would take with entries inside [from, to), for a given
+// hold horizon, across all loaded symbols. Returns gross (pre-cost) percent
+// returns tagged with entry time and symbol. Same entry/exit rules as scoring.
+export function patternTradesInWindow(loaded, scenario, horizon, from, to) {
+  const ex = sectorStyle(scenario.sectorKey);
+  const barSeconds = loaded.barSeconds;
+  const trades = [];
+  for (const s of loaded.series) {
+    const { bars, maCache, shortMA, divs, sym } = s;
+    for (let i = 1; i < bars.length - 1; i++) {
+      const t = bars[i].time;
+      if (t < from || t >= to) continue;
+      if (!conditionsMet(scenario.conditions, bars, maCache, i)) continue;
+      if (!entryOk(bars, i, shortMA)) continue;
+      if (AVOID_EARNINGS && earningsBetween(sym, t, t + horizon * barSeconds).length) continue;
+      trades.push({ time: t, symbol: sym, ret: simulateExit(bars, i, horizon, ex, divs) });
+    }
+  }
+  trades.sort((a, b) => a.time - b.time);
+  return trades;
+}
+
 // Defend against malformed provider output: drop null/invalid bars (a single bad
 // element would otherwise crash every scan with "reading 'time' of null"), and
 // guarantee bars are in ascending time order.
