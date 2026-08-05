@@ -87,6 +87,20 @@ npm start       # serves on http://localhost:3000
 
 Then open <http://localhost:3000> and start trading.
 
+### Real data + running the backtests
+
+To run the momentum / walk-forward backtests on **real market data**, add a
+Polygon key and verify it, then run headless or in the browser:
+
+```bash
+cp .env.example .env          # then set POLYGON_API_KEY in .env (gitignored)
+npm run check                 # confirm real data is flowing (never prints the key)
+npm run momentum -- --universe technology   # headless cross-sectional momentum
+```
+
+Full walkthrough — including why the first fetch is slow and how to read the
+out-of-sample verdict — in **[docs/RUN_LOCALLY.md](docs/RUN_LOCALLY.md)**.
+
 ### Offline / demo mode
 
 If you're on a network that blocks Yahoo Finance (or just want a deterministic

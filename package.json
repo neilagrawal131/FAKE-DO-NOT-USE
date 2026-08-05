@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch-path=./server --watch-path=./public server/index.js",
+    "check": "node scripts/check-data.mjs",
+    "momentum": "node scripts/momentum.mjs",
     "backfill": "node scripts/backfill.mjs",
     "postinstall": "node scripts/vendor.js"
   },
