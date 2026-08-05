@@ -13,5 +13,6 @@ data/marketdb.sqlite
 data/marketdb.sqlite-*
 data/marketdb/
 data/scheduler.json
+data/broker-orders.json
 aitrader.zip
 *.zip

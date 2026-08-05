@@ -15,6 +15,7 @@ import * as strategist from './strategist.js';
 import { withDatabase, dbStats, dbBackend, getSplits, getDividends, getEarnings } from './marketdb.js';
 import * as scheduler from './scheduler.js';
 import { scoreImportance, importanceRank, mockNews } from './news.js';
+import { getBroker } from './broker/index.js';
 
 // Choose the market-data source:
 //   - polygon  (default when POLYGON_API_KEY is set) — real quotes + deep history
@@ -108,6 +109,12 @@ if (SOURCE === 'mock') {
 
 // Tell the parser how far back intraday analysis can go for this data source.
 setIntradayMaxDays(yahoo.INTRADAY_MAX_DAYS ?? 30);
+
+// Broker abstraction (Phase 0 scaffold — see docs/GOING_LIVE.md). Defaults to the
+// paper ledger; BROKER=ibkr selects the (stubbed) Interactive Brokers venue. Live
+// execution still routes through portfolio.js for now; this exposes the broker
+// contract read-only so it can be built out and observed without disruption.
+const broker = getBroker({ priceProvider: yahoo });
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const app = express();
@@ -400,6 +407,26 @@ app.get(
       .sort((a, b) => importanceRank(b.importance) - importanceRank(a.importance) || new Date(b.published || 0) - new Date(a.published || 0))
       .slice(0, 24);
     newsCache = { at: now, data: out };
+    res.json(out);
+  })
+);
+
+// Broker status (read-only). Surfaces the active venue, its account snapshot,
+// positions and the order audit trail through the Broker contract.
+app.get(
+  '/api/broker',
+  wrap(async (req, res) => {
+    const out = { backend: broker.name };
+    try {
+      out.account = await broker.getAccount();
+      out.positions = await broker.getPositions();
+      out.openOrders = await broker.getOpenOrders();
+      out.orders = broker.getAllOrders ? await broker.getAllOrders(50) : [];
+    } catch (e) {
+      // A stubbed venue (e.g. IBKR) throws NOT_IMPLEMENTED — report it rather than 500.
+      out.available = false;
+      out.note = e.message;
+    }
     res.json(out);
   })
 );

@@ -65,21 +65,37 @@ The current execution path (`server/portfolio.js` + `server/aitrader.js`) writes
 directly to an internal ledger. Live trading needs a broker between the decision
 and the money, plus reconciliation and a hard risk gate.
 
-### 2.1 Broker abstraction layer
-Introduce a `Broker` interface so paper and live share one code path:
+### 2.1 Broker abstraction layer  — ✅ scaffolded (`server/broker/`)
+A `Broker` interface so paper and live share one code path:
 
 ```
 Broker {
   getAccount()                      // cash, buying power, equity
   getPositions()                    // source of truth = broker, not local
-  placeOrder({clientOrderId, symbol, side, qty, type:'LMT', limitPrice, tif})
+  placeOrder({clientOrderId, symbol, side, qty, type, limitPrice, tif})
   cancelOrder(clientOrderId)
+  getOrder(id) / getOpenOrders()
   streamFills(cb)                   // async fills, partials, rejects
 }
 ```
-- `PaperBroker` — wraps today's portfolio ledger (keep for dev + the UI demo).
-- `IbkrBroker` — real implementation.
-- The strategist/AI-Trader must depend on `Broker`, never on the ledger directly.
+Implemented so far:
+- `broker/broker.js` — the contract: order shape, the lifecycle **state machine**
+  (`pending_new → submitted → acknowledged → partially_filled → filled |
+  cancelled | rejected`, with illegal transitions rejected), **idempotent
+  client order ids**, request validation, and the abstract `Broker` base.
+- `broker/paper.js` — **PaperBroker** (working): wraps the `portfolio.js` ledger,
+  fills marketable orders against the live quote (buy at ask / sell at bid,
+  limits rest until marketable), routes fills through the ledger (so T+1
+  settlement still applies), persists an order audit trail, and emits fill events.
+- `broker/ibkr.js` — **IbkrBroker** (stub): documents the IBKR Client Portal Web
+  API integration surface; methods throw `NOT_IMPLEMENTED` until built.
+- `broker/index.js` — factory; `BROKER=paper` (default) or `BROKER=ibkr`.
+- `GET /api/broker` — read-only view of the active venue, account, positions and
+  order audit trail.
+
+Still to do: route the manual trade, AI-Trader and Strategist execution paths
+through `Broker` (they still call `portfolio.js` directly), add the reconciliation
+loop, and build out `IbkrBroker`.
 
 ### 2.2 Order lifecycle as a persisted state machine
 `intent → submitted → acknowledged → (partial…) → filled | cancelled | rejected`
@@ -227,7 +243,7 @@ This is the go/no-go section. **Do not fund live until all of these pass.**
 
 | Phase | Goal | Exit criteria |
 |---|---|---|
-| **0. Plumbing** | `Broker` interface, order state machine, idempotency, reconciliation, `RiskEngine` — all against **PaperBroker** | Full order lifecycle + kill switch proven in paper; risk checks reject correctly |
+| **0. Plumbing** _(in progress)_ | `Broker` interface, order state machine, idempotency ✅; reconciliation, `RiskEngine`, and routing execution through the broker — all against **PaperBroker** | Full order lifecycle + kill switch proven in paper; risk checks reject correctly |
 | **1. IBKR paper** | Wire `IbkrBroker` to the **paper** account; run the whole stack live-but-paper | 3–6 months / hundreds of trades; slippage measured; ops (restart, alerts, re-auth) solid |
 | **2. Edge validation** | Cost-adjusted, out-of-sample, walk-forward proof using the quant panel | **Go/no-go gate.** Positive cost-adjusted edge that survives OOS + Monte Carlo, or **STOP** |
 | **3. Canary live** | Micro-size real money, one strategy, supervised | Realized results match paper within tolerance |

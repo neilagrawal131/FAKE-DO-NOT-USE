@@ -221,6 +221,7 @@ server/
   yahoo.js      Live Yahoo Finance client (cookie/crumb handshake + caching)
   mock.js       Synthetic provider (same interface) for offline mode
   portfolio.js  Paper-trading account, persisted to data/portfolio.json
+  broker/       Broker abstraction (paper today, IBKR-ready) — see docs/GOING_LIVE.md
 public/
   index.html    Single-page UI
   js/app.js     UI logic (search, detail, trading, portfolio)
@@ -245,6 +246,18 @@ public/
 | POST   | `/api/aitrader/strategies` | `{ scenario }` — add a pattern to the AI Trader |
 | POST   | `/api/aitrader/strategies/:id/toggle` | Enable/disable a pattern         |
 | DELETE | `/api/aitrader/strategies/:id` | Remove a pattern                     |
+| GET    | `/api/broker`            | Active broker venue, account, positions & order audit trail |
+
+### Broker abstraction (`server/broker/`)
+
+The seam between a trading decision and the money, so swapping the paper account
+for a real brokerage is a config change, not a rewrite. `BROKER=paper` (default)
+uses the local ledger; `BROKER=ibkr` selects the Interactive Brokers venue
+(currently a documented stub). The layer provides idempotent client order ids, an
+order lifecycle state machine, an order audit trail and a fill event stream. See
+**docs/GOING_LIVE.md** for the full roadmap and what's still to build (routing all
+execution through the broker, reconciliation, the risk engine, and the real IBKR
+wiring).
 
 ### AI Analyst — how it works
 
