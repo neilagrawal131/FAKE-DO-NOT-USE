@@ -177,6 +177,15 @@ in `aitrader.js`.
 
 This is the go/no-go section. **Do not fund live until all of these pass.**
 
+**Where a real edge might come from.** Single-stock technical patterns on liquid
+large-caps are the most arbitraged data that exists — which is why they die
+out-of-sample. The durable, retail-accessible edges are **cross-sectional** and
+**low-frequency**: momentum (relative strength), value, post-earnings drift. The
+**Factor Lab** (`server/momentum.js`, `POST /api/momentum`) is the first of these —
+a cross-sectional momentum engine judged by the same walk-forward/OOS gate. At a
+$1k account, only the zero-commission + fractional + liquid + monthly-rebalance
+shape is viable; the engine is built to that shape.
+
 **6.1 Statistical edge on real data (not mock):**
 - [x] **Walk-forward / out-of-sample harness built** (`server/walkforward.js`,
       `server/costs.js`; `POST /api/walkforward`; "Run out-of-sample validation"

@@ -29,6 +29,9 @@
         <button class="rail-item" data-view="strategist">
           <span class="rail-ic">🧠</span><span class="rail-label">AI Strategist</span>
         </button>
+        <button class="rail-item" data-view="factorlab">
+          <span class="rail-ic">🧪</span><span class="rail-label">Factor Lab</span>
+        </button>
         <div class="rail-foot" id="rail-source"></div>
       </nav>
 
@@ -266,6 +269,42 @@
               <h3>Decision log <span class="ev-hint">— what it discovered, promoted and removed</span></h3>
               <div id="strat-log"></div>
             </div>
+          </div>
+        </section>
+
+        <!-- ================= FACTOR LAB (cross-sectional momentum) ================= -->
+        <section class="view" id="view-factorlab" hidden>
+          <div class="analyst">
+            <header class="analyst-head">
+              <h1>🧪 Factor Lab <span class="ev-hint">— cross-sectional momentum</span></h1>
+              <p>
+                A different kind of edge from single-stock patterns: rank the <b>whole
+                universe</b> by trailing momentum and hold the relative <b>winners</b>,
+                rebalanced monthly, inverse-volatility weighted, with real costs. Unlike
+                technical patterns, this has an <b>economic reason</b> to persist — but only
+                the <b>out-of-sample</b>, cost-adjusted result tells you if it's real.
+              </p>
+            </header>
+
+            <div class="card query-card">
+              <div class="fl-controls" id="fl-controls">
+                <label class="fl-field"><span>Universe</span>
+                  <select id="fl-universe"><option value="all">All sectors (broad)</option></select>
+                </label>
+                <label class="fl-field"><span>Hold top</span>
+                  <select id="fl-topk"><option>10</option><option selected>20</option><option>30</option><option>40</option></select>
+                </label>
+                <label class="fl-field"><span>Weighting</span>
+                  <select id="fl-weighting"><option value="inversevol" selected>Inverse-vol</option><option value="equal">Equal</option></select>
+                </label>
+                <label class="fl-field"><span>Lookback</span>
+                  <select id="fl-lookback"><option value="126">6 months</option><option value="189">9 months</option><option value="252" selected>12 months</option></select>
+                </label>
+                <button class="btn-primary" id="fl-run" style="align-self:flex-end;padding:10px 18px">Run backtest</button>
+              </div>
+            </div>
+
+            <div id="fl-results"></div>
           </div>
         </section>
       </div>

@@ -10,6 +10,7 @@ import { aggregateBars } from './aggregate.js';
 import { parseScenario, normalizeScenario, setIntradayMaxDays } from './scenario.js';
 import { runBacktest, fetchRange, intradayRange } from './backtest.js';
 import { walkForward } from './walkforward.js';
+import { runMomentum } from './momentum.js';
 import { sectorList } from './universe.js';
 import * as aitrader from './aitrader.js';
 import * as strategist from './strategist.js';
@@ -278,6 +279,15 @@ app.post(
     }
     const result = await walkForward(scenario, yahoo, config || {});
     res.json({ ...result, scenario });
+  })
+);
+
+// Cross-sectional momentum: in-sample backtest + out-of-sample walk-forward.
+app.post(
+  '/api/momentum',
+  wrap(async (req, res) => {
+    const result = await runMomentum(yahoo, (req.body && req.body.config) || {});
+    res.json(result);
   })
 );
 

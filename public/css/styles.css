@@ -671,6 +671,16 @@ input { font-family: inherit; }
 .wf-compare .wf-oos { font-weight: 700; color: var(--text); }
 .wf-cost-note { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; margin-top: 12px; }
 
+/* Factor Lab (cross-sectional momentum) */
+.fl-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+.fl-field { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; }
+.fl-field select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 13px; min-width: 130px; }
+.fl-eq { width: 100%; height: 150px; display: block; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.fl-holds { display: flex; flex-wrap: wrap; gap: 8px; }
+.fl-hold { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 4px 9px; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.fl-hold b { color: var(--text); }
+.fl-hold-w { color: var(--text-faint); }
+
 /* Regime breakdown — stacked full-width tables (like the horizon table) so every
    column stays readable rather than cramming three tables into one row. */
 .regime-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }

@@ -655,6 +655,7 @@ function setView(view) {
   }
   if (view === 'trader') refreshTrader();
   if (view === 'strategist') initStrategist();
+  if (view === 'factorlab') initFactorLab();
 }
 
 async function showConfig() {
@@ -1808,6 +1809,162 @@ function renderStrategist(data) {
         )
         .join('')
     : '<div class="empty">No decisions yet.</div>';
+}
+
+// ---------------------------------------------------------------------------
+// Factor Lab — cross-sectional momentum
+// ---------------------------------------------------------------------------
+const factorLab = { inited: false, loading: false };
+
+// Growth-of-$1 equity curve as a scaled SVG (breakeven line dashed).
+function equitySvg(curve) {
+  if (!curve || curve.length < 2) return '';
+  const W = 680;
+  const H = 150;
+  const pad = 6;
+  const min = Math.min(...curve, 1);
+  const max = Math.max(...curve, 1);
+  const span = max - min || 1;
+  const x = (i) => pad + (i / (curve.length - 1)) * (W - 2 * pad);
+  const y = (v) => H - pad - ((v - min) / span) * (H - 2 * pad);
+  const pts = curve.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const last = curve[curve.length - 1];
+  const color = last >= 1 ? 'var(--up)' : 'var(--down)';
+  const yBreak = y(1).toFixed(1);
+  return `<svg class="fl-eq" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="equity curve">
+    <polyline points="${pad},${H - pad} ${pts} ${W - pad},${H - pad}" fill="${color}" fill-opacity="0.08" stroke="none"/>
+    <line x1="${pad}" y1="${yBreak}" x2="${W - pad}" y2="${yBreak}" stroke="var(--border-strong)" stroke-dasharray="3 3" stroke-width="1"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6"/>
+  </svg>`;
+}
+
+async function runMomentum() {
+  factorLab.loading = true;
+  $('#fl-results').innerHTML = '<div class="wf-loading">⏳ Loading full history for the universe, ranking every rebalance, and validating out-of-sample with costs… this can take a moment.</div>';
+  const config = {
+    universe: $('#fl-universe').value,
+    topK: Number($('#fl-topk').value),
+    weighting: $('#fl-weighting').value,
+    lookbackBars: Number($('#fl-lookback').value),
+  };
+  try {
+    const res = await api('/api/momentum', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    });
+    renderMomentum(res);
+  } catch (e) {
+    $('#fl-results').innerHTML = `<div class="no-results">Backtest failed: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    factorLab.loading = false;
+  }
+}
+
+function renderMomentum(res) {
+  const out = $('#fl-results');
+  if (res.error) {
+    out.innerHTML = `<div class="no-results">${res.error === 'insufficient_universe' ? 'Not enough symbols with history for this universe.' : escapeHtml(res.error)}</div>`;
+    return;
+  }
+  const d = res.direct;
+  const w = res.walkforward;
+  const is = d.summary;
+  const oos = w && !w.error ? w.summary : null;
+
+  // Verdict from the OUT-OF-SAMPLE result (the number that matters).
+  let verdict;
+  let vcls;
+  let vsub;
+  if (oos && oos.n >= 6 && oos.annReturn > 0 && oos.annSharpe >= 0.5) {
+    verdict = '✓ Edge survives out-of-sample';
+    vcls = 'wf-pass';
+    vsub = 'Positive risk-adjusted return on unseen data after costs. Validate further on a live paper account before funding — and expect long drawdowns even when the edge is real.';
+  } else if (oos && oos.n >= 6 && oos.annReturn > 0) {
+    verdict = '~ Weak / unproven out-of-sample';
+    vcls = 'wf-warn';
+    vsub = 'Barely positive out-of-sample after costs, with a low Sharpe. Treat as noise until it proves out on more data or a broader universe.';
+  } else if (oos && oos.n >= 6) {
+    verdict = '✗ No edge survives costs + out-of-sample';
+    vcls = 'wf-fail';
+    vsub = 'On unseen data, after costs, this does not pay. Momentum may still be real on a bigger/real universe — but on this test it is not investable.';
+  } else {
+    verdict = 'Inconclusive — not enough out-of-sample history';
+    vcls = 'wf-warn';
+    vsub = 'Too few out-of-sample periods to judge. Needs more history than this data source provides here.';
+  }
+
+  const foldRows = (w && w.folds ? w.folds : [])
+    .map(
+      (f) => `<tr>
+        <td>${new Date(f.trainTo * 1000).toISOString().slice(0, 10)} → ${new Date(f.testTo * 1000).toISOString().slice(0, 10)}</td>
+        <td>${Math.round(f.lookbackBars / 21)}mo</td>
+        <td>${f.topK}</td>
+        <td>${f.nTest}</td>
+        <td class="${signClass(f.oosMean)}">${f.oosMean == null ? '—' : sPct(f.oosMean)}</td>
+      </tr>`
+    )
+    .join('');
+
+  const holds = (d.latest || [])
+    .map((h) => `<span class="fl-hold"><b>${h.symbol}</b> <span class="fl-hold-w">${h.weight}%</span> <span class="${h.momentum >= 0 ? 'up' : 'down'}">${sPct(h.momentum)}</span></span>`)
+    .join('');
+
+  out.innerHTML = `
+    <div class="result-block">
+      <div class="wf-verdict ${vcls}">
+        <div class="wf-verdict-head">${verdict}</div>
+        <div class="wf-verdict-sub">${vsub}</div>
+      </div>
+
+      <h4 class="wf-sub">Out-of-sample (walk-forward, cost-adjusted) <span class="wf-hint">— the number that matters</span></h4>
+      <div class="wf-grid">
+        ${oos ? qstat('OOS return / yr', sPct(oos.annReturn), signClass(oos.annReturn), 'annualized, after costs') : ''}
+        ${oos ? qstat('OOS Sharpe', oos.annSharpe.toFixed(2), signClass(oos.annSharpe), 'annualized') : ''}
+        ${oos ? qstat('OOS max drawdown', oos.maxDrawdown.toFixed(1) + '%', 'down') : ''}
+        ${oos ? qstat('OOS months', oos.n, '', `${w.folds.length} windows`) : ''}
+      </div>
+
+      <h4 class="wf-sub">In-sample equity curve <span class="wf-hint">— growth of $1, full history (optimistic — not the verdict)</span></h4>
+      ${equitySvg(is.equity)}
+      <div class="wf-grid" style="margin-top:10px">
+        ${qstat('In-sample return / yr', sPct(is.annReturn), signClass(is.annReturn), 'annualized')}
+        ${qstat('In-sample Sharpe', is.annSharpe.toFixed(2), signClass(is.annSharpe))}
+        ${qstat('Volatility / yr', is.annVol.toFixed(1) + '%')}
+        ${qstat('Max drawdown', is.maxDrawdown.toFixed(1) + '%', 'down')}
+        ${qstat('Total return', sPct(is.totalReturn), signClass(is.totalReturn), `${is.n} months`)}
+      </div>
+
+      ${foldRows ? `<h4 class="wf-sub">Per test window <span class="wf-hint">— lookback & hold-count tuned in-sample, measured out-of-sample</span></h4>
+        <div style="overflow-x:auto"><table class="h-table">
+          <thead><tr><th>Test window</th><th>Lookback</th><th>Hold</th><th>Months</th><th>Avg / mo</th></tr></thead>
+          <tbody>${foldRows}</tbody></table></div>` : ''}
+
+      <h4 class="wf-sub">Portfolio it would hold now <span class="wf-hint">— top ${res.config.topK} by momentum, ${res.config.weighting === 'equal' ? 'equal' : 'inverse-vol'} weighted</span></h4>
+      <div class="fl-holds">${holds || '<span class="oos-n">—</span>'}</div>
+
+      <div class="disclaimer-sm">Universe: ${res.universe.symbolsWithData}/${res.universe.symbolsRequested} — ${escapeHtml(res.universe.label)}. 12-minus-1 momentum, monthly rebalance; walk-forward tunes lookback ${(w.grid ? w.grid.lookbacks : []).map((l) => Math.round(l / 21) + 'mo').join('/')} and hold ${(w.grid ? w.grid.topKs : []).join('/')} on ${w.trainDays ? Math.round(w.trainDays / 365) : '?'}y train → ${w.testDays ? Math.round(w.testDays / 365) : '?'}y test. Costs modeled (commission + spread + slippage). Past performance does not predict future results.</div>
+    </div>`;
+}
+
+async function initFactorLab() {
+  if (factorLab.inited) return;
+  factorLab.inited = true;
+  // Populate universe options with sectors, keeping "All" first.
+  try {
+    const sectors = await api('/api/sectors');
+    const sel = $('#fl-universe');
+    for (const s of sectors) {
+      const o = document.createElement('option');
+      o.value = s.key;
+      o.textContent = `${s.label} (${s.count})`;
+      sel.appendChild(o);
+    }
+  } catch {
+    /* keep just "All" */
+  }
+  $('#fl-run').addEventListener('click', runMomentum);
+  runMomentum(); // run once on first open
 }
 
 function boot() {

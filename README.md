@@ -224,6 +224,7 @@ server/
   broker/       Broker abstraction (paper today, IBKR-ready) — see docs/GOING_LIVE.md
   walkforward.js  Out-of-sample / walk-forward validation engine
   costs.js      Realistic trading-cost model (commission + spread + slippage)
+  momentum.js   Cross-sectional momentum engine (Factor Lab)
 public/
   index.html    Single-page UI
   js/app.js     UI logic (search, detail, trading, portfolio)
@@ -245,6 +246,7 @@ public/
 | GET    | `/api/sectors`           | Sector universes for the AI Analyst      |
 | POST   | `/api/analyze`           | `{ query }` — backtest a plain-English scenario |
 | POST   | `/api/walkforward`       | `{ query }` — walk-forward, out-of-sample, cost-adjusted validation |
+| POST   | `/api/momentum`          | `{ config }` — cross-sectional momentum backtest + walk-forward |
 | GET    | `/api/aitrader`          | AI Trader account, patterns and trade log |
 | POST   | `/api/aitrader/strategies` | `{ scenario }` — add a pattern to the AI Trader |
 | POST   | `/api/aitrader/strategies/:id/toggle` | Enable/disable a pattern         |
@@ -290,6 +292,19 @@ the hold horizon on a training window, measures that choice on the next
 out-of-sample side by side with a plain verdict. In-sample results are how
 strategies fool you; the out-of-sample number is the one that matters. See
 **docs/GOING_LIVE.md §6**.
+
+### Factor Lab — cross-sectional momentum
+
+A different shape of strategy from single-stock patterns. Instead of asking "is
+this stock above its moving average?", it ranks the **whole universe** by trailing
+"12-minus-1" momentum and holds the relative **winners** — long-only, monthly
+rebalance, inverse-volatility weighted, with turnover costs. This is the kind of
+edge with a documented economic reason to persist (compensation for crash risk /
+slow reaction to news), rather than a technical pattern that's already arbitraged
+away. It's judged the same honest way: an in-sample equity curve for context, but
+a **walk-forward** that tunes the lookback and hold-count in-sample and reports the
+**out-of-sample, cost-adjusted** annualized return, Sharpe and drawdown — plus the
+exact portfolio it would hold today. `server/momentum.js`.
 
 ### Testing
 
