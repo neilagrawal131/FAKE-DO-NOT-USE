@@ -273,6 +273,9 @@ async function runEvaluate(provider) {
     const sec = symbolSector(sym);
     if (sec) exposure[sec] = (exposure[sec] || 0) + mv;
   }
+  // Only settled cash can fund buys (cash-account T+1 rule). Proceeds from sells
+  // made this tick stay unsettled, so buying power does NOT recycle same-day.
+  let availSettled = portfolio.settledCash();
   // Shares of `symbol` to buy at `price` for a desired order size, clamped by all
   // sizing limits: the hard 0.4%/equity per-order cap, the 4%/equity per-stock
   // cap, and the sector diversification target.
@@ -282,6 +285,7 @@ async function runEvaluate(provider) {
     const sec = symbolSector(symbol);
     const target = sec ? sectorTarget(sec) : null;
     if (target != null) room = Math.min(room, target * equity - (exposure[sec] || 0)); // sector cap
+    room = Math.min(room, availSettled); // never deploy unsettled cash (cash-account rule)
     // Skip when the room left is too small to be a meaningful position (no dust).
     if (room < Math.max(SIZE_MIN_ORDER_PCT * equity, DUST_MIN_USD) || !(price > 0)) return 0;
     // Fractional shares, so percentage orders size exactly regardless of price.
@@ -290,6 +294,7 @@ async function runEvaluate(provider) {
   const noteBuy = (symbol, shares, price) => {
     const val = shares * price;
     symExposure[symbol] = (symExposure[symbol] || 0) + val;
+    availSettled -= val; // consume settled cash; sells this tick won't replenish it
     const sec = symbolSector(symbol);
     if (sec) exposure[sec] = (exposure[sec] || 0) + val;
   };

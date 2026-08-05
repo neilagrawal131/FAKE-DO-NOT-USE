@@ -12,6 +12,12 @@ const FILE = join(DATA_DIR, 'portfolio.json');
 
 const STARTING_CASH = 100_000;
 
+// US equities settle T+1 (one business day) since May 2024. In a cash account,
+// only SETTLED cash may fund a new purchase: buying with unsettled sale proceeds
+// and then selling that position before the original sale settles is a Good Faith
+// Violation. We model this so the simulator behaves like a real cash account.
+const SETTLE_BUSINESS_DAYS = Number(process.env.SETTLE_BUSINESS_DAYS ?? 1);
+
 function fresh() {
   return {
     cash: STARTING_CASH,
@@ -19,6 +25,9 @@ function fresh() {
     positions: {}, // symbol -> { shares, avgCost }
     orders: [], // { id, ts, side, symbol, shares, price, amount }
     realizedPnL: 0,
+    // Sale proceeds awaiting settlement: { amount, symbol, tradeDate, settlesOn }.
+    // Included in `cash` but excluded from settled (tradable) cash until settlesOn.
+    pendingSettlements: [],
   };
 }
 
@@ -27,7 +36,47 @@ let state = null;
 function load() {
   if (state) return state;
   state = loadJSON(FILE, fresh);
+  if (!Array.isArray(state.pendingSettlements)) state.pendingSettlements = []; // migrate older files
   return state;
+}
+
+// --- cash settlement (T+1) --------------------------------------------------
+// Total sale proceeds that have not yet settled.
+function unsettledTotal(s) {
+  return (s.pendingSettlements || []).reduce((a, p) => a + p.amount, 0);
+}
+
+// Drop settlement entries whose settlement date has arrived. Their cash was
+// already in `s.cash`; maturing just moves it from unsettled to settled.
+function settleMatured() {
+  const s = load();
+  if (!s.pendingSettlements || !s.pendingSettlements.length) return;
+  const today = marketDay();
+  const before = s.pendingSettlements.length;
+  s.pendingSettlements = s.pendingSettlements.filter((p) => p.settlesOn > today);
+  if (s.pendingSettlements.length !== before) persist();
+}
+
+// Settled (immediately tradable) cash = total cash minus unsettled proceeds.
+export function settledCash() {
+  const s = load();
+  settleMatured();
+  return s.cash - unsettledTotal(s);
+}
+
+// The date `n` business days after a calendar date (YYYY-MM-DD), skipping
+// weekends. NOTE: market holidays are not modeled here — a real broker returns
+// the authoritative settlement date on the fill; this is a close approximation
+// for the simulator.
+function nextBusinessDay(dateStr, n = 1) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  let added = 0;
+  while (added < n) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) added += 1;
+  }
+  return d.toISOString().slice(0, 10);
 }
 
 function persist() {
@@ -68,9 +117,14 @@ export function trade({ side, symbol, shares, price, ts, bid = null, ask = null,
   const amount = shares * price;
 
   if (side === 'buy') {
-    if (amount > s.cash + 1e-6) {
+    // Cash-account rule: only settled cash can fund a purchase. Unsettled sale
+    // proceeds are off-limits until they settle (T+1).
+    const avail = settledCash();
+    if (amount > avail + 1e-6) {
+      const unsettled = unsettledTotal(s);
       throw badRequest(
-        `Insufficient cash: need $${amount.toFixed(2)}, have $${s.cash.toFixed(2)}`
+        `Insufficient settled cash: need $${amount.toFixed(2)}, have $${avail.toFixed(2)} settled` +
+          (unsettled > 1e-6 ? ` ($${unsettled.toFixed(2)} unsettled from recent sales)` : '')
       );
     }
     s.cash -= amount;
@@ -91,6 +145,15 @@ export function trade({ side, symbol, shares, price, ts, bid = null, ask = null,
     pos.shares -= shares;
     if (pos.shares <= 1e-9) delete s.positions[symbol];
     else s.positions[symbol] = pos;
+    // Proceeds are unsettled until T+1 — they count toward equity but cannot fund
+    // a new buy until they settle.
+    const tradeDate = marketDay();
+    s.pendingSettlements.push({
+      amount,
+      symbol,
+      tradeDate,
+      settlesOn: nextBusinessDay(tradeDate, SETTLE_BUSINESS_DAYS),
+    });
   }
 
   const order = {
@@ -132,6 +195,7 @@ export function credit({ symbol, amount, ts, note = 'dividend' }) {
 // Build a marked-to-market view given a { symbol -> {price, previousClose} } map.
 export function summarize(priceMap = {}) {
   const s = load();
+  settleMatured(); // mature any proceeds that have settled since the last view
   const positions = Object.entries(s.positions).map(([symbol, pos]) => {
     const mark = priceMap[symbol]?.price ?? null;
     const prevClose = priceMap[symbol]?.previousClose ?? null;
@@ -170,8 +234,12 @@ export function summarize(priceMap = {}) {
   const anchorEquity = s.dayAnchor ? s.dayAnchor.equity : equity;
   const dayChange = equity - anchorEquity;
 
+  const unsettled = unsettledTotal(s);
   return {
     cash: s.cash,
+    settledCash: s.cash - unsettled, // cash available to place a new buy
+    unsettledCash: unsettled, // sale proceeds still settling (T+1)
+    settlements: s.pendingSettlements.map((p) => ({ amount: p.amount, symbol: p.symbol, settlesOn: p.settlesOn })),
     startingCash: s.startingCash,
     positionsValue,
     equity,

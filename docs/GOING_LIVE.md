@@ -109,6 +109,10 @@ Build a `RiskEngine` that runs **before every live order** and **fails closed**
 in `aitrader.js`.
 
 **Pre-trade checks (hard limits):**
+- [x] **Cash-account settlement (T+1)** — only *settled* cash can fund a buy;
+      unsettled sale proceeds are excluded from buying power until they settle,
+      so the simulator can't do something that would be a Good Faith Violation
+      live. Enforced at the `portfolio.trade()` choke point.
 - [ ] Max $ per order, max % of equity per order
 - [ ] Max position per symbol; max exposure per sector; max gross & net exposure
 - [ ] Buying-power / margin check before submit

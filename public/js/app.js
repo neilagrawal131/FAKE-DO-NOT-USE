@@ -429,7 +429,8 @@ function applyQuickQty(qv) {
   const px = fillPrice();
   if (!px) return;
   const input = $('#shares-input');
-  const buyingPower = window.__portfolio?.cash ?? 0;
+  // Buying power = settled cash only (unsettled sale proceeds can't fund a buy).
+  const buyingPower = window.__portfolio?.settledCash ?? window.__portfolio?.cash ?? 0;
   const held = heldShares(state.symbol);
 
   if (qv === 'Max') input.value = Math.floor(buyingPower / px);
@@ -468,7 +469,11 @@ function renderTradeEstimate() {
   const p = window.__portfolio;
   if (p) {
     if (state.side === 'buy') {
-      $('#buying-power').textContent = `Buying power: ${usd(p.cash)}`;
+      const bp = p.settledCash ?? p.cash;
+      const unsettled = p.unsettledCash ?? 0;
+      $('#buying-power').innerHTML =
+        `Buying power: ${usd(bp)}` +
+        (unsettled > 0.005 ? ` <span style="color:var(--text-faint)">· ${usd(unsettled)} unsettled</span>` : '');
     } else {
       $('#buying-power').textContent = `You hold ${num(heldShares(state.symbol), 4)} shares`;
     }
@@ -540,6 +545,7 @@ function applyPortfolio(p) {
     <div class="tile">
       <div class="tile-label">Cash</div>
       <div class="tile-value" style="font-size:15px">${usd(p.cash)}</div>
+      ${p.unsettledCash > 0.005 ? `<div class="tile-sub">${usd(p.settledCash)} settled · ${usd(p.unsettledCash)} unsettled</div>` : '<div class="tile-sub">all settled</div>'}
     </div>
     <div class="tile">
       <div class="tile-label">Invested</div>
@@ -1377,7 +1383,7 @@ function renderTrader(data) {
     <div class="tile"><div class="tile-label">Account value <span class="ev-hint">(shared with Trade)</span></div><div class="tile-value">${usd(a.equity)}</div>
       <div class="tile-sub ${signClass(a.totalPnL)}">${pct(a.totalReturnPct)} all-time</div></div>
     <div class="tile"><div class="tile-label">Cash</div><div class="tile-value" style="font-size:16px">${usd(a.cash)}</div>
-      <div class="tile-sub">invested ${usd(a.positionsValue)}</div></div>
+      <div class="tile-sub">invested ${usd(a.positionsValue)}${a.unsettledCash > 0.005 ? ` · ${usd(a.unsettledCash)} unsettled` : ''}</div></div>
     <div class="tile"><div class="tile-label">AI realized P/L</div><div class="tile-value ${signClass(ai.realizedPnL)}" style="font-size:16px">${usd(ai.realizedPnL)}</div>
       <div class="tile-sub">from closed bot trades</div></div>
     <div class="tile"><div class="tile-label">AI trades</div><div class="tile-value" style="font-size:16px">${ai.totalTrades}</div>

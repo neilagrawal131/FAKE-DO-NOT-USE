@@ -65,6 +65,11 @@ No real money, no brokerage account, no API keys.
 - **Paper trading engine:**
   - $100,000 starting cash (persisted between restarts).
   - Market Buy / Sell **filled at the live price** (never a client-supplied one).
+  - **Cash-account settlement (T+1):** only *settled* cash can fund a buy. Sale
+    proceeds are unsettled until the next business day, so buying power reflects
+    settled cash only — the simulator won't do anything that would be a Good
+    Faith Violation in a real cash account. (Set `SETTLE_BUSINESS_DAYS=0` to
+    disable for a margin-style account.)
   - Quick-size buttons (10, 25%, 50%, Max / All).
   - Positions marked to market with unrealized P/L, realized P/L, day change,
     total return and an order blotter.
