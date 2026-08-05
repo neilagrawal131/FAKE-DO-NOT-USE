@@ -7,16 +7,21 @@
 //      genes (hill-climbing on parameters: MA period, horizon, % move, sector…).
 //   2. SCORES each candidate by reward-vs-risk (a Sharpe-like ratio of average
 //      forward return to its volatility) over real history.
-//   3. RECONCILES the live roster: it promotes the top qualifying genes into the
-//      AI Trader (owner: 'strategist') and demotes/removes ones that fall out of
-//      the top set — so it is always adding, removing and replacing patterns to
-//      raise reward while lowering risk.
-//   4. TRADES them on the shared paper account via the AI Trader engine.
+//   3. VALIDATES candidates out-of-sample: before any pattern can go live it must
+//      pass a cost-adjusted WALK-FORWARD test (tune on train, measure on the next
+//      unseen window, rolling — with commission/spread/slippage subtracted). The
+//      in-sample score is used only to rank what to explore; the OUT-OF-SAMPLE
+//      score is what gates promotion, so the roster isn't built on overfitting.
+//   4. RECONCILES the live roster: it promotes the top OOS-validated genes into
+//      the AI Trader (owner: 'strategist') and demotes ones that fail (re)validation
+//      or fall out of the top set — always raising reward while lowering risk.
+//   5. TRADES them on the shared paper account via the AI Trader engine.
 //
 // It only ever touches strategies it owns (owner: 'strategist'); patterns the
 // user added by hand in the AI Trader tab are left untouched.
 
 import { simulatePattern } from './backtest.js';
+import { walkForward } from './walkforward.js';
 import { normalizeScenario } from './scenario.js';
 import { TARGET_SECTORS, sectorLabel, sectorTarget, sectorStyle } from './universe.js';
 import * as aitrader from './aitrader.js';
@@ -47,6 +52,16 @@ const MIN_SCORE = Number.isFinite(Number(process.env.STRATEGIST_MIN_SCORE)) ? Nu
 // Position size per promoted pattern — small so the shared account's capital
 // spreads across the whole (large) roster and many patterns actually deploy.
 const STRAT_TRADE = Number(process.env.STRATEGIST_TRADE_USD) || 1200;
+
+// --- out-of-sample validation gate ---------------------------------------------
+// A pattern must clear these on UNSEEN, cost-adjusted, walk-forward data before it
+// can be promoted (and it is periodically re-checked so a decayed edge is demoted).
+const OOS_MIN_TRADES = Number(process.env.STRATEGIST_OOS_MIN_TRADES) || 20; // enough OOS trades to mean something
+const OOS_MIN_SCORE = Number.isFinite(Number(process.env.STRATEGIST_OOS_MIN_SCORE)) ? Number(process.env.STRATEGIST_OOS_MIN_SCORE) : 0; // positive cost-adjusted expectancy
+const OOS_TRAIN_DAYS = Number(process.env.STRATEGIST_OOS_TRAIN_DAYS) || 365; // walk-forward train window (calendar days)
+const OOS_TEST_DAYS = Number(process.env.STRATEGIST_OOS_TEST_DAYS) || 180; // walk-forward test window
+const VALIDATE_PER_CYCLE = Number(process.env.STRATEGIST_VALIDATE_PER_CYCLE) || 3; // OOS validations run per tick (cost control)
+const REVALIDATE_EVERY = Number(process.env.STRATEGIST_REVALIDATE_EVERY) || 300; // re-check a live gene after this many generations
 
 const UNIVERSES = TARGET_SECTORS; // rotate through every sector that has a diversification target
 
@@ -195,7 +210,14 @@ function summarize(rets) {
   };
 }
 const scoreOf = (e) => (e && e.stats ? e.stats.score : -Infinity);
-const qualifies = (e) => e && e.stats && e.stats.n >= MIN_SAMPLE && e.stats.mean > 0 && e.stats.score > MIN_SCORE;
+const oosScoreOf = (e) => (e && e.oos ? e.oos.score : -Infinity);
+// In-sample qualification — used only to decide what is worth exploring and
+// validating, NOT what goes live.
+const qualifiesInSample = (e) => e && e.stats && e.stats.n >= MIN_SAMPLE && e.stats.mean > 0 && e.stats.score > MIN_SCORE;
+// Live qualification — the real gate: it must also have passed the cost-adjusted
+// out-of-sample walk-forward test.
+const qualifiesLive = (e) =>
+  qualifiesInSample(e) && e.oos && e.oos.n >= OOS_MIN_TRADES && e.oos.mean > 0 && e.oos.score > OOS_MIN_SCORE;
 
 async function scoreGene(gene) {
   const scenario = geneScenario(gene);
@@ -203,6 +225,57 @@ async function scoreGene(gene) {
   // stop/time exits, so the reward/risk ranking reflects real execution.
   const { returns, symbolsWithData } = await simulatePattern(scenario, provider);
   return { stats: summarize(returns), scenario, symbolsScanned: symbolsWithData };
+}
+
+// Out-of-sample validation of ONE gene: a cost-adjusted walk-forward test holding
+// the gene's own horizon fixed (we're validating this exact pattern, not re-tuning
+// it). Returns a summary of the unseen, net-of-cost returns (null if none).
+async function validateGene(gene) {
+  const scenario = geneScenario(gene);
+  const wf = await walkForward(scenario, provider, {
+    horizons: [gene.horizon],
+    trainDays: OOS_TRAIN_DAYS,
+    testDays: OOS_TEST_DAYS,
+  });
+  return summarize((wf && wf.oosReturns) || []);
+}
+
+// Validation pass: spend a small, bounded budget each cycle validating (or
+// re-validating) in-sample-qualified genes out-of-sample. New candidates are
+// validated before stale ones, highest in-sample score first — so promising
+// discoveries earn (or fail) their live slot quickly.
+async function validationPass() {
+  const s = load();
+  const candidates = Object.values(s.pool)
+    .filter(qualifiesInSample)
+    .filter((e) => !e.oos || s.generation - e.oos.gen > REVALIDATE_EVERY)
+    .sort((a, b) => Number(!!a.oos) - Number(!!b.oos) || scoreOf(b) - scoreOf(a));
+
+  let done = 0;
+  for (const e of candidates) {
+    if (done >= VALIDATE_PER_CYCLE) break;
+    let oos;
+    try {
+      oos = await validateGene(e.gene);
+    } catch {
+      continue; // transient (data) error — retry next cycle, leave unvalidated
+    }
+    const wasLive = qualifiesLive(e);
+    e.oos = oos
+      ? { ...oos, gen: s.generation }
+      : { n: 0, mean: 0, std: 0, winRate: 0, score: -Infinity, gen: s.generation };
+    done += 1;
+    const nowLive = qualifiesLive(e);
+    if (nowLive && !wasLive) {
+      logEvent('validate', e.label, `passed out-of-sample: ${e.oos.mean.toFixed(2)}% mean over ${e.oos.n} unseen trades (score ${e.oos.score.toFixed(3)}, after costs)`);
+    } else if (!nowLive && wasLive) {
+      logEvent('reject', e.label, `failed re-validation: out-of-sample ${e.oos.mean.toFixed(2)}% over ${e.oos.n} trades — no longer promotable`);
+    } else if (!nowLive && !e._loggedFail) {
+      e._loggedFail = true;
+      logEvent('reject', e.label, oos ? `did not survive out-of-sample: ${e.oos.mean.toFixed(2)}% over ${e.oos.n} trades (after costs)` : 'no out-of-sample trades to validate on');
+    }
+  }
+  return done;
 }
 
 // --- one generation: explore + exploit + score + prune -------------------------
@@ -255,7 +328,7 @@ async function runGeneration() {
       continue;
     }
     const prev = s.pool[k];
-    const wasQualified = prev && qualifies(prev);
+    const wasQualified = prev && qualifiesInSample(prev);
     s.pool[k] = {
       gene,
       key: k,
@@ -263,12 +336,15 @@ async function runGeneration() {
       stats: scored.stats,
       scenario: scored.scenario,
       symbolsScanned: scored.symbolsScanned,
+      // Re-scored in-sample stats can change → its OOS verdict may be stale.
+      // Preserve any prior OOS result; the validation pass refreshes it.
+      oos: prev ? prev.oos : null,
       evals: (prev ? prev.evals : 0) + 1,
       lastSeen: Math.floor(Date.now() / 1000),
     };
-    if (!wasQualified && qualifies(s.pool[k])) {
+    if (!wasQualified && qualifiesInSample(s.pool[k])) {
       discovered++;
-      logEvent('discover', s.pool[k].label, `score ${scored.stats.score.toFixed(3)}, ${scored.stats.n} occ, mean ${scored.stats.mean.toFixed(2)}%`);
+      logEvent('discover', s.pool[k].label, `in-sample score ${scored.stats.score.toFixed(3)}, ${scored.stats.n} occ, mean ${scored.stats.mean.toFixed(2)}% — queued for out-of-sample validation`);
     }
   }
 
@@ -311,9 +387,11 @@ async function reconcile() {
   // Allocate roster slots PER SECTOR in proportion to the sector's diversification
   // target, so every sector is represented and capital spreads to match the target
   // weights — instead of a few high-scoring sectors monopolizing the whole roster.
+  // Only OUT-OF-SAMPLE-validated genes are eligible for the live roster, and they
+  // are ranked by their out-of-sample (cost-adjusted) score — not the in-sample one.
   const perSector = {};
   for (const e of Object.values(s.pool)) {
-    if (!qualifies(e)) continue;
+    if (!qualifiesLive(e)) continue;
     const sec = e.gene.sectorKey;
     (perSector[sec] || (perSector[sec] = [])).push(e);
   }
@@ -321,7 +399,7 @@ async function reconcile() {
   const keepSigs = new Set();
   for (const sec of UNIVERSES) {
     const slots = Math.max(1, Math.round(TARGET_ROSTER * (sectorTarget(sec) || 0)));
-    const ranked = (perSector[sec] || []).sort((a, b) => scoreOf(b) - scoreOf(a));
+    const ranked = (perSector[sec] || []).sort((a, b) => oosScoreOf(b) - oosScoreOf(a));
     for (const e of ranked.slice(0, slots)) desired.push(e);
     // Hysteresis: keep a live pattern until it drops out of a wider per-sector band.
     const retain = slots + Math.max(2, Math.round(slots * 0.4));
@@ -345,8 +423,9 @@ async function reconcile() {
   const liveSigs = new Set(owned.map((st) => scenarioSig(st.scenario)));
   for (const e of desired) {
     if (liveSigs.has(scenarioSig(e.scenario))) continue;
-    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true, STRAT_TRADE, e.stats.score);
-    if (added) logEvent('promote', e.label, `promoted (${sectorLabel(e.gene.sectorKey)}) — score ${e.stats.score.toFixed(3)}, win ${e.stats.winRate.toFixed(0)}%`);
+    // Size by the OUT-OF-SAMPLE score (the validated edge), not the in-sample one.
+    const added = aitrader.addStrategy(e.scenario, `Auto: ${e.label}`, 'strategist', true, STRAT_TRADE, e.oos.score);
+    if (added) logEvent('promote', e.label, `promoted (${sectorLabel(e.gene.sectorKey)}) — out-of-sample ${e.oos.mean.toFixed(2)}% mean over ${e.oos.n} unseen trades, score ${e.oos.score.toFixed(3)}`);
   }
 }
 
@@ -357,6 +436,7 @@ async function cycle() {
   running = true;
   try {
     await runGeneration();
+    await validationPass(); // gate: prove (or disprove) candidates out-of-sample
     await reconcile();
     // Trading itself is executed by the dedicated AI Trader engine loop (see
     // server/index.js startEngine), so we only discover + reconcile the roster here.
@@ -396,19 +476,22 @@ export function getState() {
   const s = load();
   const activeSigs = new Set(ownedStrategies().map((st) => scenarioSig(st.scenario)));
 
-  // Lead with genes that actually qualify to trade (enough sample + edge), so
-  // tiny-sample flukes with a huge score don't dominate the view.
+  // Lead with genes that have passed out-of-sample validation, then in-sample
+  // qualifiers, so proven patterns and tiny-sample flukes don't get confused.
   const leaderboard = Object.values(s.pool)
     .filter((e) => e.stats)
-    .sort((a, b) => (qualifies(b) - qualifies(a)) || scoreOf(b) - scoreOf(a))
+    .sort((a, b) => (qualifiesLive(b) - qualifiesLive(a)) || (qualifiesInSample(b) - qualifiesInSample(a)) || scoreOf(b) - scoreOf(a))
     .slice(0, 40)
     .map((e) => ({
       label: e.label,
       sector: sectorLabel(e.gene.sectorKey),
       horizon: e.gene.horizon,
       stats: e.stats,
+      oos: e.oos || null, // out-of-sample verdict (null until validated)
       evals: e.evals,
-      qualified: qualifies(e),
+      qualified: qualifiesInSample(e),
+      oosValidated: !!e.oos,
+      oosPassed: qualifiesLive(e),
       live: activeSigs.has(scenarioSig(e.scenario)),
     }));
 
@@ -419,6 +502,7 @@ export function getState() {
       name: st.name.replace(/^Auto: /, ''),
       enabled: st.enabled,
       stats: e ? e.stats : null,
+      oos: e ? e.oos || null : null,
     };
   });
 
@@ -429,7 +513,9 @@ export function getState() {
     lastCycle: s.lastCycle,
     tickMs: TICK_MS,
     poolSize: Object.keys(s.pool).length,
-    qualified: Object.values(s.pool).filter(qualifies).length,
+    qualified: Object.values(s.pool).filter(qualifiesInSample).length,
+    qualifiedLive: Object.values(s.pool).filter(qualifiesLive).length,
+    validated: Object.values(s.pool).filter((e) => e.oos).length,
     targetRoster: TARGET_ROSTER,
     minSample: MIN_SAMPLE,
     lookbackDays: LOOKBACK_DAYS,

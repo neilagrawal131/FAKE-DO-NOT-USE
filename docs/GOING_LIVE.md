@@ -188,8 +188,11 @@ This is the go/no-go section. **Do not fund live until all of these pass.**
       out on mock, where it correctly finds no edge._
 - [x] Judges on the shared quant panel (Sharpe/Sortino/Monte Carlo) computed on
       the **out-of-sample** returns only, with the same stats module the Analyst uses.
-- [ ] Feed the autonomous Strategist's promotion decision from the **out-of-sample**
-      score, not the in-sample one (today it promotes on in-sample score).
+- [x] **The autonomous Strategist now promotes on the out-of-sample score.**
+      In-sample scoring is used only to rank what to explore; before any pattern
+      can go live it must pass a cost-adjusted walk-forward gate (`validationPass`
+      in `server/strategist.js`), and it is periodically re-validated so a decayed
+      edge is demoted. The roster is ranked/sized by the OOS score, not in-sample.
 - [ ] Check **regime** breakdown per pattern — an edge that only exists in one
       regime must be gated to that regime, not run blind.
 

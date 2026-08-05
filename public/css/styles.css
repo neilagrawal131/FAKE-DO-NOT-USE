@@ -485,7 +485,11 @@ input { font-family: inherit; }
 .strat-controls .btn-primary { width: auto; padding: 11px 20px; }
 .h-table tr.applied { background: rgba(38, 166, 154, 0.10); }
 .applied-tag { font-weight: 800; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: rgba(38,166,154,0.2); color: var(--up); }
-.active-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: var(--bg-elev-2); color: var(--text-faint); }
+.active-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: rgba(38,166,154,0.14); color: var(--up); }
+.fail-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: rgba(239,83,80,0.16); color: var(--down); }
+.pending-tag { font-weight: 700; font-size: 9px; letter-spacing: 0.4px; padding: 1px 6px; border-radius: 4px; background: var(--bg-elev-2); color: var(--text-faint); }
+.strat-chip.oos { background: rgba(56,189,248,0.14); color: var(--text); }
+.oos-n { color: var(--text-faint); font-size: 11px; }
 
 /* diversification allocation panel */
 .alloc-head { display: flex; gap: 18px; align-items: center; margin-bottom: 10px; font-size: 13px; color: var(--text-dim); }

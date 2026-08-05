@@ -1716,7 +1716,7 @@ function agoLabel(ts) {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   return `${Math.floor(s / 3600)}h ago`;
 }
-const LOG_ICON = { discover: '🔎', promote: '⬆️', demote: '⬇️', pause: '⏸', resume: '▶️' };
+const LOG_ICON = { discover: '🔎', validate: '🔬', reject: '🚫', promote: '⬆️', demote: '⬇️', pause: '⏸', resume: '▶️' };
 
 function renderStrategist(data) {
   if (!data) return;
@@ -1734,7 +1734,8 @@ function renderStrategist(data) {
   $('#strat-status').innerHTML = `
     <div class="strat-stat"><span class="strat-stat-v">${data.generation.toLocaleString()}</span><span class="strat-stat-k">generations</span></div>
     <div class="strat-stat"><span class="strat-stat-v">${data.poolSize}</span><span class="strat-stat-k">patterns explored</span></div>
-    <div class="strat-stat"><span class="strat-stat-v">${data.qualified}</span><span class="strat-stat-k">qualified</span></div>
+    <div class="strat-stat"><span class="strat-stat-v">${data.qualified}</span><span class="strat-stat-k">in-sample edge</span></div>
+    <div class="strat-stat"><span class="strat-stat-v">${data.qualifiedLive ?? '—'}</span><span class="strat-stat-k">passed out-of-sample</span></div>
     <div class="strat-stat"><span class="strat-stat-v">${data.roster.length}/${data.targetRoster}</span><span class="strat-stat-k">live now</span></div>
     <div class="strat-stat"><span class="strat-stat-v">${data.running ? 'working…' : agoLabel(data.lastCycle)}</span><span class="strat-stat-k">last cycle</span></div>`;
 
@@ -1746,13 +1747,14 @@ function renderStrategist(data) {
     roster.innerHTML = data.roster
       .map((r) => {
         const s = r.stats;
+        const o = r.oos;
         return `<div class="strat-roster-row">
           <span class="dot live"></span>
           <span class="strat-roster-name">${escapeHtml(r.name)}</span>
-          ${s ? `<span class="strat-chip">score <b>${s.score.toFixed(3)}</b></span>
-                 <span class="strat-chip">win ${pctOnly(s.winRate)}</span>
-                 <span class="strat-chip ${s.mean >= 0 ? 'up' : 'down'}">exp ${sPct(s.mean)}</span>
-                 <span class="strat-chip">σ ${s.std.toFixed(1)}%</span>` : ''}
+          ${o ? `<span class="strat-chip oos">OOS <b class="${o.mean >= 0 ? 'up' : 'down'}">${sPct(o.mean)}</b> · ${o.n} trades</span>
+                 <span class="strat-chip">OOS score <b>${o.score.toFixed(3)}</b></span>` : ''}
+          ${s ? `<span class="strat-chip">in-sample ${sPct(s.mean)}</span>
+                 <span class="strat-chip">win ${pctOnly(s.winRate)}</span>` : ''}
         </div>`;
       })
       .join('');
@@ -1762,25 +1764,35 @@ function renderStrategist(data) {
   const rows = data.leaderboard
     .map((r, i) => {
       const s = r.stats;
-      const tag = r.live ? '<span class="applied-tag">LIVE</span>' : r.qualified ? '<span class="active-tag">ready</span>' : '';
+      const o = r.oos;
+      // Tag reflects the gate: LIVE (trading), OOS ✓ (passed, promotable),
+      // OOS ✗ (validated but failed), ⏳ (in-sample edge, awaiting validation).
+      let tag = '';
+      if (r.live) tag = '<span class="applied-tag">LIVE</span>';
+      else if (r.oosPassed) tag = '<span class="active-tag">OOS ✓</span>';
+      else if (r.oosValidated) tag = '<span class="fail-tag">OOS ✗</span>';
+      else if (r.qualified) tag = '<span class="pending-tag">⏳ validating</span>';
+      const oosCell = o
+        ? `<span class="${o.mean >= 0 ? 'up' : 'down'}">${sPct(o.mean)}</span> <span class="oos-n">${o.n}</span>`
+        : '<span class="oos-n">—</span>';
       return `<tr class="${r.live ? 'applied' : ''}">
         <td>${i + 1}</td>
         <td>${escapeHtml(r.label)} ${tag}</td>
         <td>${s.n}</td>
         <td class="${s.mean >= 0 ? 'up' : 'down'}">${sPct(s.mean)}</td>
+        <td>${oosCell}</td>
         <td>${pctOnly(s.winRate)}</td>
-        <td class="up">${sPct(s.avgWin)}</td>
-        <td class="down">${sPct(s.avgLoss)}</td>
         <td>${s.std.toFixed(1)}%</td>
-        <td><b>${s.score.toFixed(3)}</b></td>
+        <td>${o ? '<b>' + o.score.toFixed(3) + '</b>' : '<span class="oos-n">' + s.score.toFixed(3) + ' IS</span>'}</td>
       </tr>`;
     })
     .join('');
   $('#strat-leaderboard').innerHTML = data.leaderboard.length
     ? `<div style="overflow-x:auto"><table class="h-table">
-        <thead><tr><th>#</th><th>Pattern</th><th>Occ.</th><th>Expected</th><th>Win</th>
-          <th>Avg win</th><th>Avg loss</th><th>Risk (σ)</th><th>Score ★</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>`
+        <thead><tr><th>#</th><th>Pattern</th><th>Occ.</th><th>In-sample</th><th>Out-of-sample</th><th>Win</th>
+          <th>Risk (σ)</th><th>Score ★</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+        <div class="disclaimer-sm">Score ★ is the <b>out-of-sample</b>, cost-adjusted reward/risk once validated (falls back to in-sample "IS" until then). Only patterns marked <b>OOS ✓</b> can be promoted to live trading.</div>`
     : '<div class="empty">Warming up — scanning the pattern space…</div>';
 
   // Decision log.
