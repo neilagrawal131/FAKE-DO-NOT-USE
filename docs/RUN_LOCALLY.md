@@ -88,6 +88,25 @@ the rest. On a paid plan, pass `--rpm 100` to skip the throttle.
 Read the **OUT-OF-SAMPLE** block — that's the honest number. In-sample is shown
 only for context and is always flattering.
 
+### Deep history for the walk-forward — use Yahoo
+
+Polygon's **free tier only serves ~2 years** of history. That's too short for a
+walk-forward (which needs ~3+ years to have a train window *and* an unseen test
+window), so the out-of-sample verdict comes back "inconclusive" — and a 2-year
+in-sample momentum number measured over one bull market tells you nothing.
+
+For a real out-of-sample test, pull **decades of free daily history from Yahoo**:
+
+```bash
+npm run momentum -- --universe technology --source yahoo
+```
+
+`--source yahoo` overrides the data source for that run (it doesn't touch your
+`.env`). Yahoo is free and deep but unofficial and occasionally rate-limits; for
+a one-time daily download of a sector it's reliable enough, and it lands in the
+same local DB. A paid Polygon tier (5-year / 10-year+ history) also works and is
+more robust — but for validating an idea, Yahoo's deep history is the free path.
+
 **Why the first run is slow, and why the next is instant:** history is fetched
 through a local SQLite database (`data/marketdb.sqlite`). The first run pulls each
 symbol from Polygon and persists it; every run afterward reads from the DB with no

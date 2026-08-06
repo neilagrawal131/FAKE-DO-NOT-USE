@@ -7,9 +7,13 @@
 //   npm run momentum -- --universe technology         # one sector (20 names)
 //   npm run momentum -- --topK 15 --weighting equal --lookback 126
 //   npm run momentum -- --rpm 100                      # paid Polygon tier: go fast
+//   npm run momentum -- --source yahoo                 # DEEP history (decades, free)
 //
 // Flags: --universe <all|sectorKey>  --topK <n>  --weighting <inversevol|equal>
 //        --lookback <bars>  (252≈12mo, 189≈9mo, 126≈6mo)
+//        --source <polygon|yahoo|mock>  data source for this run (overrides .env).
+//                   Polygon free tier = ~2y history (too short for a walk-forward);
+//                   `yahoo` gives decades of free daily bars — use it to validate.
 //        --rpm <n>  requests/min cap for the FIRST download (Polygon free tier = 5;
 //                   raise it on a paid plan). Cached symbols are never throttled.
 import '../server/loadenv.js';
@@ -25,7 +29,10 @@ function flag(name, def) {
 }
 
 const key = process.env.POLYGON_API_KEY;
-const source = (process.env.DATA_SOURCE || (key ? 'polygon' : 'yahoo')).toLowerCase();
+// --source overrides DATA_SOURCE for this run. Use `yahoo` for DEEP history:
+// Polygon's free tier only serves ~2 years (too short for a walk-forward), while
+// Yahoo returns decades of free daily bars — enough to test across market regimes.
+const source = flag('source', process.env.DATA_SOURCE || (key ? 'polygon' : 'yahoo')).toLowerCase();
 const upstream = source === 'mock' ? mock : source === 'polygon' ? polygon : yahoo;
 // Mock bypasses the DB; real sources go through it so history persists locally.
 const provider = source === 'mock' ? mock : withDatabase(upstream);
@@ -79,7 +86,14 @@ if (oos && oos.n >= 6) {
   console.log(`  return/yr ${pct(oos.annReturn)} · Sharpe ${oos.annSharpe.toFixed(2)} · maxDD ${oos.maxDrawdown.toFixed(1)}% · ${oos.n} months over ${res.walkforward.folds.length} windows`);
   console.log(`  → ${verdict}\n`);
 } else {
-  console.log('OUT-OF-SAMPLE: inconclusive — not enough history for a walk-forward here.\n');
+  const years = res.span.from && res.span.to ? ((res.span.to - res.span.from) / (365 * 86400)).toFixed(1) : '?';
+  console.log(`OUT-OF-SAMPLE: inconclusive — only ~${years}y of history (a walk-forward needs ~3y+).`);
+  if (source === 'polygon') {
+    console.log("Polygon's free tier caps history at ~2 years. For a real out-of-sample test, re-run with deep, free history:");
+    console.log('  npm run momentum -- --universe technology --source yahoo\n');
+  } else {
+    console.log('Widen the history or universe and re-run.\n');
+  }
 }
 
 console.log('Portfolio it would hold now (top by momentum):');
