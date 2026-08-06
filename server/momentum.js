@@ -37,23 +37,6 @@ export const MOMENTUM_DEFAULTS = Object.freeze({
 });
 
 // --- small utilities ---------------------------------------------------------
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
-  let idx = 0;
-  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (idx < items.length) {
-      const i = idx++;
-      try {
-        out[i] = await fn(items[i]);
-      } catch {
-        out[i] = null;
-      }
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
-
 function cleanBars(data) {
   const bars = (data && data.bars) || [];
   return bars
@@ -98,14 +81,49 @@ export function universeLabel(key) {
   return !key || key === 'all' ? 'All sectors (broad liquid universe)' : sectorLabel(key);
 }
 
-// Load daily bars once for the whole universe.
-export async function loadMomentumUniverse(symbols, provider) {
-  const per = await mapLimit(symbols, 6, async (sym) => {
-    const bars = cleanBars(await provider.chart(sym, 'max', '1d'));
-    if (bars.length < 120) return null;
-    return { sym, bars };
-  });
-  const series = per.filter(Boolean);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Load daily bars once for the whole universe. Rate-limit aware so it survives a
+// free Polygon plan (~5 req/min): requests run sequentially, a 429 backs off and
+// retries (never silently dropping a symbol), and — only when `rpm` is set — a
+// pace delay is applied AFTER an actual upstream fetch. Symbols already in the
+// local DB return instantly and are never paced, so repeat runs stay fast.
+export async function loadMomentumUniverse(symbols, provider, opts = {}) {
+  const rpm = Number(opts.rpm) || 0; // 0 = no fixed pacing (rely on cache + 429 backoff)
+  const gapMs = rpm > 0 ? Math.ceil(60000 / rpm) : 0;
+  const onSkip = typeof opts.onSkip === 'function' ? opts.onSkip : () => {};
+  const series = [];
+
+  for (const sym of symbols) {
+    let data = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        data = await provider.chart(sym, 'max', '1d');
+        break;
+      } catch (e) {
+        if (e && (e.status === 429 || /rate limit|\b429\b/i.test(e.message || ''))) {
+          await sleep((gapMs || 12000) * (attempt + 1)); // rate-limited — back off and retry
+          continue;
+        }
+        onSkip(sym, e.message || 'fetch failed');
+        break;
+      }
+    }
+    if (!data) {
+      onSkip(sym, 'rate-limited after retries');
+      continue;
+    }
+    const bars = cleanBars(data);
+    if (bars.length < 120) {
+      onSkip(sym, `only ${bars.length} bars`);
+      continue;
+    }
+    series.push({ sym, bars });
+    // Pace only on a genuine upstream hit (the DB layer tags served-from-cache as
+    // 'db'); cached symbols impose no delay.
+    if (gapMs && data.source === 'upstream') await sleep(gapMs);
+  }
+
   // Master clock = the longest series' timeline (liquid US names share the NYSE
   // calendar, so this is a good rebalance clock).
   let clock = [];
@@ -350,7 +368,7 @@ export async function runMomentum(provider, cfg = {}) {
   const params = { ...MOMENTUM_DEFAULTS, ...cfg };
   const key = cfg.universe || 'all';
   const symbols = universeSymbols(key);
-  const loaded = await loadMomentumUniverse(symbols, provider);
+  const loaded = await loadMomentumUniverse(symbols, provider, { rpm: cfg.rpm, onSkip: cfg.onSkip });
   if (loaded.series.length < 10) {
     return { error: 'insufficient_universe', universe: { key, label: universeLabel(key), symbolsRequested: symbols.length, symbolsWithData: loaded.series.length } };
   }

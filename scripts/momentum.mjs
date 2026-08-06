@@ -4,11 +4,14 @@
 // Polygon plan — ~1 request/symbol, ~5/min) and every run after is instant.
 //
 //   npm run momentum                                  # broad universe, defaults
-//   npm run momentum -- --universe technology         # one sector (20 names, fast)
+//   npm run momentum -- --universe technology         # one sector (20 names)
 //   npm run momentum -- --topK 15 --weighting equal --lookback 126
+//   npm run momentum -- --rpm 100                      # paid Polygon tier: go fast
 //
 // Flags: --universe <all|sectorKey>  --topK <n>  --weighting <inversevol|equal>
 //        --lookback <bars>  (252≈12mo, 189≈9mo, 126≈6mo)
+//        --rpm <n>  requests/min cap for the FIRST download (Polygon free tier = 5;
+//                   raise it on a paid plan). Cached symbols are never throttled.
 import '../server/loadenv.js';
 import { withDatabase } from '../server/marketdb.js';
 import * as polygon from '../market_data/polygon.js';
@@ -27,22 +30,34 @@ const upstream = source === 'mock' ? mock : source === 'polygon' ? polygon : yah
 // Mock bypasses the DB; real sources go through it so history persists locally.
 const provider = source === 'mock' ? mock : withDatabase(upstream);
 
+// Rate cap for the first download. Mock/Yahoo don't need it; default to the
+// Polygon free-tier limit (5/min) so the first run doesn't 429 itself to death.
+const rpm = source === 'polygon' ? Number(flag('rpm', 5)) : 0;
+
 const config = {
   universe: flag('universe', 'all'),
   topK: Number(flag('topK', 20)),
   weighting: flag('weighting', 'inversevol'),
   lookbackBars: Number(flag('lookback', 252)),
+  rpm,
+  onSkip: (sym, why) => console.log(`  · skipped ${sym}: ${why}`),
 };
 
 const pct = (x) => (x == null ? '—' : `${x >= 0 ? '+' : ''}${x.toFixed(2)}%`);
 
 console.log(`Data source: ${source}${source !== 'polygon' ? '  (⚠ not real Polygon data — results are illustrative)' : ''}`);
-console.log(`Config: universe=${config.universe} topK=${config.topK} weighting=${config.weighting} lookback=${config.lookbackBars} bars`);
-console.log('Loading universe history (first run may take a while on a free plan)…\n');
+console.log(`Config: universe=${config.universe} topK=${config.topK} weighting=${config.weighting} lookback=${config.lookbackBars} bars${rpm ? ` · ${rpm} req/min cap` : ''}`);
+if (rpm && rpm <= 5) console.log(`First run downloads each new symbol at ~${rpm}/min (free-tier safe) and persists it locally; later runs read from the DB instantly. Pass --rpm 100 on a paid plan.`);
+console.log('Loading universe history…\n');
 
 const res = await runMomentum(provider, config);
 if (res.error) {
-  console.error(`Failed: ${res.error}`, res.universe || '');
+  if (res.error === 'insufficient_universe') {
+    console.error(`\nFailed: only ${res.universe.symbolsWithData}/${res.universe.symbolsRequested} symbols loaded — not enough to backtest.`);
+    console.error('Likely Polygon rate-limiting on a free plan. Re-run to let the local DB keep filling, lower the rate with a smaller universe, or use --rpm on a paid plan.');
+  } else {
+    console.error(`Failed: ${res.error}`, res.universe || '');
+  }
   process.exit(1);
 }
 

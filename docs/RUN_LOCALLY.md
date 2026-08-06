@@ -65,13 +65,25 @@ npm run momentum -- --universe technology
 # ~200 symbols at ~5/min → it can take ~40 minutes. Paid plans are quick.
 npm run momentum
 
+# Paid Polygon tier — lift the rate cap and go fast:
+npm run momentum -- --rpm 100
+
 # Tune it:
 npm run momentum -- --topK 15 --weighting equal --lookback 126
 #   --universe   all | a sector key (technology, energy, biotech, …)
 #   --topK       how many names to hold
 #   --weighting  inversevol | equal
 #   --lookback   momentum window in bars (252≈12mo, 189≈9mo, 126≈6mo)
+#   --rpm        request/min cap for the first download (free tier = 5, default)
 ```
+
+**Free plan? This is handled automatically.** Polygon's free tier allows ~5
+requests/minute. The downloader runs one symbol at a time, capped at `--rpm`
+(default **5**), and if it still hits a `429` it backs off and retries rather than
+dropping the symbol — so the first full download completes (slowly) and every
+symbol lands in the local DB. If a run ends with "only N/20 symbols loaded", just
+re-run it: the DB keeps what it already fetched (those are instant) and fills in
+the rest. On a paid plan, pass `--rpm 100` to skip the throttle.
 
 Read the **OUT-OF-SAMPLE** block — that's the honest number. In-sample is shown
 only for context and is always flattering.
