@@ -1876,18 +1876,21 @@ function renderMomentum(res) {
   let verdict;
   let vcls;
   let vsub;
-  if (oos && oos.n >= 6 && oos.annReturn > 0 && oos.annSharpe >= 0.5) {
-    verdict = '✓ Edge survives out-of-sample';
+  const bench = w && !w.error ? w.benchmark : null;
+  const excess = oos && bench ? oos.annReturn - bench.annReturn : null; // momentum alpha over EW hold
+  const notSelecting = d.selects === false;
+  if (oos && oos.n >= 6 && excess != null && excess > 1 && oos.annSharpe > (bench.annSharpe || 0)) {
+    verdict = '✓ Momentum adds edge over holding the universe';
     vcls = 'wf-pass';
-    vsub = 'Positive risk-adjusted return on unseen data after costs. Validate further on a live paper account before funding — and expect long drawdowns even when the edge is real.';
-  } else if (oos && oos.n >= 6 && oos.annReturn > 0) {
-    verdict = '~ Weak / unproven out-of-sample';
+    vsub = `On unseen data after costs, momentum beat just equal-weight holding the same names by ${sPct(excess)}/yr — real selection alpha, not only the universe's drift. Still: expect deep drawdowns, and validate on a live paper account before funding.`;
+  } else if (oos && oos.n >= 6 && excess != null && excess > -1) {
+    verdict = '~ No edge beyond the universe (mostly beta)';
     vcls = 'wf-warn';
-    vsub = 'Barely positive out-of-sample after costs, with a low Sharpe. Treat as noise until it proves out on more data or a broader universe.';
+    vsub = `Momentum roughly matched equal-weight holding the same names (excess ${sPct(excess)}/yr). The return is the universe's drift, not momentum selection.${notSelecting ? ' Note: topK ≥ the universe size, so it is not actually selecting a subset — only reweighting.' : ''}`;
   } else if (oos && oos.n >= 6) {
-    verdict = '✗ No edge survives costs + out-of-sample';
+    verdict = '✗ Momentum underperforms just holding the universe';
     vcls = 'wf-fail';
-    vsub = 'On unseen data, after costs, this does not pay. Momentum may still be real on a bigger/real universe — but on this test it is not investable.';
+    vsub = `After costs, momentum lagged equal-weight holding the same names by ${sPct(excess)}/yr — the selection actively hurt. Not investable as-is.`;
   } else {
     verdict = 'Inconclusive — not enough out-of-sample history';
     vcls = 'wf-warn';
@@ -1917,13 +1920,20 @@ function renderMomentum(res) {
         <div class="wf-verdict-sub">${vsub}</div>
       </div>
 
-      <h4 class="wf-sub">Out-of-sample (walk-forward, cost-adjusted) <span class="wf-hint">— the number that matters</span></h4>
+      <h4 class="wf-sub">Momentum vs just holding the same names <span class="wf-hint">— out-of-sample, cost-adjusted · excess = the real edge</span></h4>
       <div class="wf-grid">
-        ${oos ? qstat('OOS return / yr', sPct(oos.annReturn), signClass(oos.annReturn), 'annualized, after costs') : ''}
-        ${oos ? qstat('OOS Sharpe', oos.annSharpe.toFixed(2), signClass(oos.annSharpe), 'annualized') : ''}
-        ${oos ? qstat('OOS max drawdown', oos.maxDrawdown.toFixed(1) + '%', 'down') : ''}
-        ${oos ? qstat('OOS months', oos.n, '', `${w.folds.length} windows`) : ''}
+        ${oos ? qstat('Momentum / yr', sPct(oos.annReturn), signClass(oos.annReturn), `Sharpe ${oos.annSharpe.toFixed(2)}`) : ''}
+        ${bench ? qstat('Equal-weight hold / yr', sPct(bench.annReturn), signClass(bench.annReturn), `Sharpe ${(bench.annSharpe || 0).toFixed(2)}`) : ''}
+        ${excess != null ? qstat('Excess (alpha) / yr', sPct(excess), signClass(excess), 'momentum − hold') : ''}
+        ${oos ? qstat('OOS max drawdown', oos.maxDrawdown.toFixed(1) + '%', 'down', `${oos.n} periods · ${w.folds.length} windows`) : ''}
+        ${d.avgUniverse != null ? qstat('Selection', `${d.avgHeld} of ${d.avgUniverse}`, notSelecting ? 'down' : '', notSelecting ? 'topK ≥ universe: not selecting' : 'names held / investable') : ''}
       </div>
+      ${w && w.regime ? `<div style="overflow-x:auto"><table class="h-table" style="margin-top:12px">
+        <thead><tr><th>OOS by market direction</th><th>Periods</th><th>Momentum avg</th><th>Hold avg</th><th>Momentum − hold</th></tr></thead>
+        <tbody>
+          <tr><td>Up markets</td><td>${w.regime.up.n}</td><td class="${signClass(w.regime.up.mom)}">${sPct(w.regime.up.mom)}</td><td>${sPct(w.regime.up.bench)}</td><td class="${signClass(w.regime.up.mom - w.regime.up.bench)}">${sPct(w.regime.up.mom - w.regime.up.bench)}</td></tr>
+          <tr><td>Down markets</td><td>${w.regime.down.n}</td><td class="${signClass(w.regime.down.mom)}">${sPct(w.regime.down.mom)}</td><td>${sPct(w.regime.down.bench)}</td><td class="${signClass(w.regime.down.mom - w.regime.down.bench)}">${sPct(w.regime.down.mom - w.regime.down.bench)}</td></tr>
+        </tbody></table></div>` : ''}
 
       <h4 class="wf-sub">In-sample equity curve <span class="wf-hint">— growth of $1, full history (optimistic — not the verdict)</span></h4>
       ${equitySvg(is.equity)}

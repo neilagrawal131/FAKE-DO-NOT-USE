@@ -188,6 +188,7 @@ export function simulateMomentum(loaded, params, range = {}) {
 
   const periods = [];
   let prevW = new Map(); // symbol -> weight held going into this rebalance
+  let prevBenchW = new Map(); // equal-weight benchmark's prior weights
   let start = d.lookbackBars + d.skipBars + 5;
 
   for (let r = start; r + d.rebalBars < clock.length; r += d.rebalBars) {
@@ -209,8 +210,21 @@ export function simulateMomentum(loaded, params, range = {}) {
     }
     if (cands.length < Math.max(5, Math.min(p.topK, 5))) {
       prevW = new Map();
+      prevBenchW = new Map();
       continue;
     }
+
+    // Benchmark: equal-weight buy-and-hold of EVERY investable name this period
+    // (the same pool momentum chooses from). Momentum's excess over this is the
+    // selection alpha; if they match, the "edge" is just the universe's drift.
+    const benchW = new Map();
+    for (const c of cands) benchW.set(c.sym, 1 / cands.length);
+    let benchGross = 0;
+    for (const c of cands) benchGross += c.fwd / cands.length;
+    let benchTurn = 0;
+    for (const sym of new Set([...benchW.keys(), ...prevBenchW.keys()])) benchTurn += Math.abs((benchW.get(sym) || 0) - (prevBenchW.get(sym) || 0));
+    const benchNet = benchGross - benchTurn * oneWayCost;
+    prevBenchW = benchW;
 
     cands.sort((a, b) => b.mom - a.mom);
     const picks = cands.slice(0, Math.min(p.topK, cands.length));
@@ -250,10 +264,12 @@ export function simulateMomentum(loaded, params, range = {}) {
       periods.push({
         time: tR,
         n: picks.length,
+        universe: cands.length, // how many names were investable this period
         exposure,
         turnover,
         grossRet: gross * 100,
         ret: net * 100, // NET percent — what the client's stats run on
+        benchRet: benchNet * 100, // equal-weight-hold benchmark, same period
       });
     }
     // Carry forward the *effective* weights (post-exposure) for next turnover calc.
@@ -318,12 +334,21 @@ function annualize(periodsPerYear, retsPct) {
 export function momentumBacktest(loaded, params) {
   const sim = simulateMomentum(loaded, params);
   const rets = sim.periods.map((x) => x.ret);
+  const bench = sim.periods.map((x) => x.benchRet);
   const d = deriveBars(loaded.clock, { ...MOMENTUM_DEFAULTS, ...params });
   const ppy = Math.max(1, Math.round(d.barsPerYear / d.rebalBars)); // ≈12 (monthly), any frequency
+  // Average investable names vs how many we hold — if topK >= universe, momentum
+  // isn't SELECTING (it holds everything), so any difference is only weighting.
+  const avgUniverse = sim.periods.length ? sim.periods.reduce((a, p) => a + (p.universe || 0), 0) / sim.periods.length : 0;
+  const avgHeld = sim.periods.length ? sim.periods.reduce((a, p) => a + (p.n || 0), 0) / sim.periods.length : 0;
   return {
     periods: sim.periods,
     monthlyReturns: rets,
     summary: annualize(ppy, rets),
+    benchmark: annualize(ppy, bench),
+    selects: avgHeld < avgUniverse - 0.5, // is it actually picking a subset?
+    avgUniverse: +avgUniverse.toFixed(1),
+    avgHeld: +avgHeld.toFixed(1),
     latest: sim.latest,
     periodsPerYear: ppy,
   };
@@ -350,6 +375,7 @@ export function momentumWalkForward(loaded, cfg = {}) {
 
   const folds = [];
   const oos = [];
+  const oosBench = []; // benchmark return for each OOS period (paired with oos)
   let trainStart = tMin;
   let guard = 0;
   while (trainStart + trainSec + testSec <= tMax + DAY && guard < 100) {
@@ -377,11 +403,30 @@ export function momentumWalkForward(loaded, cfg = {}) {
         trainSharpe: best.sharpe,
         nTest: testRets.length,
         oosMean: testRets.length ? testRets.reduce((a, b) => a + b.ret, 0) / testRets.length : null,
+        benchMean: testRets.length ? testRets.reduce((a, b) => a + b.benchRet, 0) / testRets.length : null,
       });
-      for (const pd of testRets) oos.push(pd.ret);
+      for (const pd of testRets) {
+        oos.push(pd.ret);
+        oosBench.push(pd.benchRet);
+      }
     }
     trainStart += testSec;
   }
+
+  // Regime split of the OOS periods by the market's direction that period
+  // (benchmark up vs down) — does momentum protect in down markets or only ride bulls?
+  const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  const up = { mom: [], bench: [] };
+  const down = { mom: [], bench: [] };
+  for (let i = 0; i < oos.length; i++) {
+    const bucket = oosBench[i] >= 0 ? up : down;
+    bucket.mom.push(oos[i]);
+    bucket.bench.push(oosBench[i]);
+  }
+  const regime = {
+    up: { n: up.mom.length, mom: avg(up.mom), bench: avg(up.bench) },
+    down: { n: down.mom.length, mom: avg(down.mom), bench: avg(down.bench) },
+  };
 
   return {
     grid: { lookbackMonths: lookbackMonthsGrid, topKs },
@@ -389,6 +434,9 @@ export function momentumWalkForward(loaded, cfg = {}) {
     testDays: cfg.testDays || 365,
     folds,
     oosReturns: oos,
+    oosBenchReturns: oosBench,
+    benchmark: annualize(ppy, oosBench),
+    regime,
     summary: annualize(ppy, oos),
     periodsPerYear: ppy,
   };

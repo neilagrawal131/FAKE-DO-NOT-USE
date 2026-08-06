@@ -79,16 +79,33 @@ console.log(`History:  ${res.span.from ? new Date(res.span.from * 1000).toISOStr
 console.log(`Data:     ${dd.bars} bars · ~${dd.barsPerYear}/yr (${dd.frequency}) · lookback ${dd.lookbackBars} bars · rebalance every ${dd.rebalBars} bars\n`);
 
 console.log('IN-SAMPLE (full history — optimistic, not the verdict):');
-console.log(`  return/yr ${pct(is.annReturn)} · Sharpe ${is.annSharpe.toFixed(2)} · vol ${is.annVol.toFixed(1)}% · maxDD ${is.maxDrawdown.toFixed(1)}% · ${is.n} rebalances\n`);
+console.log(`  return/yr ${pct(is.annReturn)} · Sharpe ${is.annSharpe.toFixed(2)} · vol ${is.annVol.toFixed(1)}% · maxDD ${is.maxDrawdown.toFixed(1)}% · ${is.n} rebalances`);
+if (res.direct.avgUniverse != null) {
+  console.log(`  (holds ${res.direct.avgHeld} of ${res.direct.avgUniverse} investable names/period` +
+    (res.direct.selects ? ')' : ` — topK ≥ universe, so it is NOT selecting, only weighting)`));
+}
+console.log('');
 
 if (oos && oos.n >= 6) {
+  const bench = res.walkforward.benchmark || {};
+  const excess = oos.annReturn - (bench.annReturn || 0); // momentum alpha over equal-weight hold
+  // The real edge test is EXCESS over just holding the same names, not absolute return.
   const verdict =
-    oos.annReturn > 0 && oos.annSharpe >= 0.5 ? 'EDGE SURVIVES out-of-sample'
-      : oos.annReturn > 0 ? 'WEAK / unproven out-of-sample'
-        : 'NO EDGE survives costs + out-of-sample';
-  console.log('OUT-OF-SAMPLE (walk-forward, cost-adjusted — the number that matters):');
-  console.log(`  return/yr ${pct(oos.annReturn)} · Sharpe ${oos.annSharpe.toFixed(2)} · maxDD ${oos.maxDrawdown.toFixed(1)}% · ${oos.n} rebalances over ${res.walkforward.folds.length} windows`);
-  console.log(`  → ${verdict}\n`);
+    excess > 1 && oos.annSharpe > (bench.annSharpe || 0) ? 'MOMENTUM ADDS EDGE over just holding the universe'
+      : excess > -1 ? 'NO EDGE beyond the universe — this is mostly beta (holding these names), not momentum alpha'
+        : 'MOMENTUM UNDERPERFORMS just holding the universe';
+  console.log('OUT-OF-SAMPLE (walk-forward, cost-adjusted) — momentum vs just holding the same names:');
+  console.log(`  Momentum:   return/yr ${pct(oos.annReturn)} · Sharpe ${oos.annSharpe.toFixed(2)} · maxDD ${oos.maxDrawdown.toFixed(1)}%`);
+  console.log(`  EW hold:    return/yr ${pct(bench.annReturn)} · Sharpe ${(bench.annSharpe || 0).toFixed(2)} · maxDD ${(bench.maxDrawdown || 0).toFixed(1)}%`);
+  console.log(`  Excess (α): ${pct(excess)}/yr   over ${oos.n} rebalances / ${res.walkforward.folds.length} windows`);
+  console.log(`  → ${verdict}`);
+  const rg = res.walkforward.regime;
+  if (rg) {
+    console.log('  By market direction (per period):');
+    console.log(`    UP markets  (${rg.up.n}):  momentum ${pct(rg.up.mom)} vs hold ${pct(rg.up.bench)}`);
+    console.log(`    DOWN markets(${rg.down.n}):  momentum ${pct(rg.down.mom)} vs hold ${pct(rg.down.bench)}`);
+  }
+  console.log('');
 } else {
   console.log(`OUT-OF-SAMPLE: inconclusive — ${is.n} rebalance periods over ~${years}y produced ${res.walkforward.folds ? res.walkforward.folds.length : 0} walk-forward windows.`);
   if (dd.frequency && dd.frequency !== 'daily') {
