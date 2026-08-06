@@ -376,9 +376,17 @@ function covers(bars, from, to, interval) {
   if (bars.length < 20) return false;
   const oldest = bars[0].time;
   const newest = bars[bars.length - 1].time;
-  const maxStale = DAILY_INTERVALS.has(interval) ? 30 * 3600 : 3 * 3600;
+  // Daily bars: tolerate multi-day gaps (weekends / holidays) before calling the
+  // series stale — otherwise a Friday close looks "stale" all weekend and forces
+  // a needless refetch.
+  const maxStale = DAILY_INTERVALS.has(interval) ? 4 * 86400 : 3 * 3600;
   const startTol = intervalSeconds(interval) * 5;
-  return oldest <= from + startTol && newest >= to - maxStale;
+  // "Deep enough" means we reach the requested start OR we already hold a long
+  // history. The latter is essential for `max`/multi-year requests: a symbol can
+  // never have data back to `from` (30 years ago), so once its FULL available
+  // history is stored we must treat that as covered instead of refetching forever.
+  const deepEnough = oldest <= from + startTol || bars.length >= 240;
+  return deepEnough && newest >= to - maxStale;
 }
 function metaFromBars(symbol, bars) {
   const last = bars[bars.length - 1];
@@ -386,8 +394,24 @@ function metaFromBars(symbol, bars) {
   return { symbol, currency: 'USD', exchange: null, regularMarketPrice: last ? last.close : null, previousClose: prev ? prev.close : last ? last.open : null, regularMarketTime: last ? last.time : null };
 }
 
+const FETCH_LOG_FILE = join(DATA_DIR, 'marketdb-fetch.json');
+
 export function withDatabase(upstream) {
-  const lastFetch = new Map();
+  // Load the last-fetch log from disk so the cooldown survives across processes —
+  // a fresh `npm run momentum` must NOT re-hammer the provider for series we just
+  // pulled in a previous run.
+  const persisted = loadJSON(FETCH_LOG_FILE, () => ({})) || {};
+  const lastFetch = new Map(Object.entries(persisted).map(([k, v]) => [k, Number(v)]));
+  const rememberFetch = (key) => {
+    lastFetch.set(key, Date.now());
+    const obj = {};
+    for (const [k, v] of lastFetch) obj[k] = v;
+    try {
+      saveJSON(FETCH_LOG_FILE, obj);
+    } catch {
+      /* non-fatal: cooldown just won't persist */
+    }
+  };
   return {
     async chart(symbol, range = '1mo', interval = '1d') {
       const sym = String(symbol).toUpperCase();
@@ -407,7 +431,7 @@ export function withDatabase(upstream) {
         if (stored.length) return { meta: metaFromBars(sym, stored), bars: stored, source: 'db-stale' };
         throw err;
       }
-      lastFetch.set(key, Date.now());
+      rememberFetch(key);
       store.upsert(sym, interval, fresh.bars || []);
       const merged = store.getBars(sym, interval, from, to);
       return { meta: fresh.meta, bars: merged.length ? merged : fresh.bars || [], source: 'upstream' };
