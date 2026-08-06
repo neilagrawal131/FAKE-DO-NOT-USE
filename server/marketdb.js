@@ -396,14 +396,18 @@ function metaFromBars(symbol, bars) {
 
 const FETCH_LOG_FILE = join(DATA_DIR, 'marketdb-fetch.json');
 
-export function withDatabase(upstream) {
-  // Load the last-fetch log from disk so the cooldown survives across processes —
-  // a fresh `npm run momentum` must NOT re-hammer the provider for series we just
-  // pulled in a previous run.
+export function withDatabase(upstream, opts = {}) {
+  // A label for the upstream data source (e.g. 'polygon' | 'yahoo'). The cache is
+  // per-source: switching source (say Polygon's shallow free tier -> Yahoo's deep
+  // history) must NOT serve the other source's cached bars — it re-fetches.
+  const sourceLabel = opts.source || 'upstream';
+  // Load the fetch log from disk so the cooldown + source survive across processes.
   const persisted = loadJSON(FETCH_LOG_FILE, () => ({})) || {};
-  const lastFetch = new Map(Object.entries(persisted).map(([k, v]) => [k, Number(v)]));
+  const lastFetch = new Map(
+    Object.entries(persisted).map(([k, v]) => [k, typeof v === 'object' && v ? v : { ts: Number(v) || 0, source: undefined }])
+  );
   const rememberFetch = (key) => {
-    lastFetch.set(key, Date.now());
+    lastFetch.set(key, { ts: Date.now(), source: sourceLabel });
     const obj = {};
     for (const [k, v] of lastFetch) obj[k] = v;
     try {
@@ -418,10 +422,15 @@ export function withDatabase(upstream) {
       const { from, to } = windowFor(range);
       const stored = store.getBars(sym, interval, from, to);
       const key = `${sym}|${interval}`;
-      const cooled = Date.now() - (lastFetch.get(key) || 0) < FETCH_COOLDOWN_MS;
+      const prior = lastFetch.get(key) || { ts: 0, source: undefined };
+      const cooled = Date.now() - (prior.ts || 0) < FETCH_COOLDOWN_MS;
+      // Only trust cached bars that were fetched from the CURRENT source. A legacy
+      // entry with no recorded source (undefined) is treated as a mismatch, so the
+      // first run after this change re-fetches once and tags the source.
+      const sameSource = prior.source === sourceLabel;
       // Serve from our database when it covers the window, or when we already
       // topped it up recently (so short-history symbols don't refetch forever).
-      if (covers(stored, from, to, interval) || (stored.length >= 30 && cooled)) {
+      if (sameSource && (covers(stored, from, to, interval) || (stored.length >= 30 && cooled))) {
         return { meta: metaFromBars(sym, stored), bars: stored, source: 'db' };
       }
       let fresh;

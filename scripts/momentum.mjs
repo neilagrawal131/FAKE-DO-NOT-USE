@@ -35,7 +35,8 @@ const key = process.env.POLYGON_API_KEY;
 const source = flag('source', process.env.DATA_SOURCE || (key ? 'polygon' : 'yahoo')).toLowerCase();
 const upstream = source === 'mock' ? mock : source === 'polygon' ? polygon : yahoo;
 // Mock bypasses the DB; real sources go through it so history persists locally.
-const provider = source === 'mock' ? mock : withDatabase(upstream);
+// The source label makes the DB cache per-source, so switching source re-fetches.
+const provider = source === 'mock' ? mock : withDatabase(upstream, { source });
 
 // Rate cap for the first download. Mock/Yahoo don't need it; default to the
 // Polygon free-tier limit (5/min) so the first run doesn't 429 itself to death.

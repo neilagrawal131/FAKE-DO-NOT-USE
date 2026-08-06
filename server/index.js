@@ -106,7 +106,7 @@ if (SOURCE === 'mock') {
   upstreamProvider = SOURCE === 'polygon' ? withFallback(polygonProvider, yahooProvider) : yahooProvider;
   // Chain: upstream API -> our database (persist every bar) -> 10s in-memory cache.
   // Backtests read from the database; the upstream is hit only to fill gaps.
-  yahoo = cachedProvider(withDatabase(upstreamProvider), MARKET_CACHE_MS);
+  yahoo = cachedProvider(withDatabase(upstreamProvider, { source: SOURCE }), MARKET_CACHE_MS);
 }
 
 // Tell the parser how far back intraday analysis can go for this data source.
