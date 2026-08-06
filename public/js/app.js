@@ -1845,7 +1845,7 @@ async function runMomentum() {
     universe: $('#fl-universe').value,
     topK: Number($('#fl-topk').value),
     weighting: $('#fl-weighting').value,
-    lookbackBars: Number($('#fl-lookback').value),
+    lookbackMonths: Number($('#fl-lookback').value),
   };
   try {
     const res = await api('/api/momentum', {
@@ -1898,7 +1898,7 @@ function renderMomentum(res) {
     .map(
       (f) => `<tr>
         <td>${new Date(f.trainTo * 1000).toISOString().slice(0, 10)} → ${new Date(f.testTo * 1000).toISOString().slice(0, 10)}</td>
-        <td>${Math.round(f.lookbackBars / 21)}mo</td>
+        <td>${f.lookbackMonths}mo</td>
         <td>${f.topK}</td>
         <td>${f.nTest}</td>
         <td class="${signClass(f.oosMean)}">${f.oosMean == null ? '—' : sPct(f.oosMean)}</td>
@@ -1943,7 +1943,7 @@ function renderMomentum(res) {
       <h4 class="wf-sub">Portfolio it would hold now <span class="wf-hint">— top ${res.config.topK} by momentum, ${res.config.weighting === 'equal' ? 'equal' : 'inverse-vol'} weighted</span></h4>
       <div class="fl-holds">${holds || '<span class="oos-n">—</span>'}</div>
 
-      <div class="disclaimer-sm">Universe: ${res.universe.symbolsWithData}/${res.universe.symbolsRequested} — ${escapeHtml(res.universe.label)}. 12-minus-1 momentum, monthly rebalance; walk-forward tunes lookback ${(w.grid ? w.grid.lookbacks : []).map((l) => Math.round(l / 21) + 'mo').join('/')} and hold ${(w.grid ? w.grid.topKs : []).join('/')} on ${w.trainDays ? Math.round(w.trainDays / 365) : '?'}y train → ${w.testDays ? Math.round(w.testDays / 365) : '?'}y test. Costs modeled (commission + spread + slippage). Past performance does not predict future results.</div>
+      <div class="disclaimer-sm">Universe: ${res.universe.symbolsWithData}/${res.universe.symbolsRequested} — ${escapeHtml(res.universe.label)}. 12-minus-1 momentum, monthly rebalance; walk-forward tunes lookback ${(w.grid ? w.grid.lookbackMonths : []).map((l) => l + 'mo').join('/')} and hold ${(w.grid ? w.grid.topKs : []).join('/')} on ${w.trainDays ? Math.round(w.trainDays / 365) : '?'}y train → ${w.testDays ? Math.round(w.testDays / 365) : '?'}y test. Costs modeled (commission + spread + slippage). Past performance does not predict future results.</div>
     </div>`;
 }
 

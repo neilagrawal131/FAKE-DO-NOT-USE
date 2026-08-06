@@ -25,16 +25,41 @@ import { DEFAULT_COSTS, roundTripCostPct } from './costs.js';
 
 const DAY = 86400;
 
+// Parameters are expressed in CALENDAR terms (months/years) and converted to a
+// bar count from the data's ACTUAL sampling frequency — so the same config works
+// whether the source returns daily bars (Polygon) or weekly bars (Yahoo `max`),
+// instead of silently mis-scaling a 252-"day" lookback into 252 weeks.
 export const MOMENTUM_DEFAULTS = Object.freeze({
-  lookbackBars: 252, // ~12 months
-  skipBars: 21, // ~1 month, the "12–1" skip
-  rebalBars: 21, // rebalance monthly
-  volWindow: 63, // ~3 months for per-name vol
+  lookbackMonths: 12, // "12–1" momentum: 12-month formation window…
+  skipMonths: 1, // …skipping the most recent month
+  rebalMonths: 1, // rebalance monthly
+  volMonths: 3, // ~3 months for per-name vol
   topK: 20, // hold the top 20 names
   weighting: 'inversevol', // 'inversevol' | 'equal'
   volTargetAnnual: null, // e.g. 0.15 to scale exposure toward a 15% vol target (else full invested)
-  freshnessDays: 7, // ignore a symbol whose latest bar is staler than this at a rebalance
+  freshnessDays: 10, // ignore a symbol whose latest bar is staler than this at a rebalance (weekly-safe)
 });
+
+// Estimate bars-per-year from a timeline (≈252 for daily, ≈52 for weekly).
+export function estimateBarsPerYear(clock) {
+  if (!clock || clock.length < 2) return 252;
+  const years = (clock[clock.length - 1] - clock[0]) / (365.25 * DAY);
+  return years > 0 ? (clock.length - 1) / years : 252;
+}
+
+// Convert calendar-based params to concrete bar counts for the data's frequency.
+export function deriveBars(clock, p = {}) {
+  const barsPerYear = estimateBarsPerYear(clock);
+  const perMonth = Math.max(1, Math.round(barsPerYear / 12));
+  return {
+    barsPerYear,
+    perMonth,
+    lookbackBars: Math.max(10, Math.round((barsPerYear * (p.lookbackMonths ?? 12)) / 12)),
+    skipBars: Math.max(1, Math.round(perMonth * (p.skipMonths ?? 1))),
+    rebalBars: Math.max(1, Math.round(perMonth * (p.rebalMonths ?? 1))),
+    volWindow: Math.max(5, Math.round(perMonth * (p.volMonths ?? 3))),
+  };
+}
 
 // --- small utilities ---------------------------------------------------------
 function cleanBars(data) {
@@ -131,17 +156,18 @@ export async function loadMomentumUniverse(symbols, provider, opts = {}) {
   return { series, clock: clock.map((b) => b.time), symbolsRequested: symbols.length, symbolsWithData: series.length };
 }
 
-// Momentum signal + trailing vol for one symbol at bar index i.
-function signalAt(bars, i, p) {
-  const need = p.skipBars + p.lookbackBars;
+// Momentum signal + trailing vol for one symbol at bar index i. `d` carries the
+// concrete bar counts derived for the data's frequency (deriveBars).
+function signalAt(bars, i, d) {
+  const need = d.skipBars + d.lookbackBars;
   if (i < need) return null;
-  const endC = bars[i - p.skipBars].close; // skip the most recent bars
-  const startC = bars[i - p.skipBars - p.lookbackBars].close;
+  const endC = bars[i - d.skipBars].close; // skip the most recent bars
+  const startC = bars[i - d.skipBars - d.lookbackBars].close;
   if (!(startC > 0) || !(endC > 0)) return null;
   const mom = endC / startC - 1;
-  // Trailing daily vol over volWindow ending at i.
+  // Trailing per-bar vol over the vol window ending at i.
   const rets = [];
-  for (let k = Math.max(1, i - p.volWindow + 1); k <= i; k++) {
+  for (let k = Math.max(1, i - d.volWindow + 1); k <= i; k++) {
     const r = bars[k].close / bars[k - 1].close - 1;
     if (Number.isFinite(r)) rets.push(r);
   }
@@ -157,21 +183,23 @@ export function simulateMomentum(loaded, params, range = {}) {
   const oneWayCost = roundTripCostPct(params.costs || DEFAULT_COSTS) / 2 / 100; // fraction, per side
   const clock = loaded.clock;
   const freshness = p.freshnessDays * DAY;
+  // Concrete bar counts for THIS data's frequency (daily vs weekly, etc.).
+  const d = deriveBars(clock, p);
 
   const periods = [];
   let prevW = new Map(); // symbol -> weight held going into this rebalance
-  let start = p.lookbackBars + p.skipBars + 5;
+  let start = d.lookbackBars + d.skipBars + 5;
 
-  for (let r = start; r + p.rebalBars < clock.length; r += p.rebalBars) {
+  for (let r = start; r + d.rebalBars < clock.length; r += d.rebalBars) {
     const tR = clock[r];
-    const tNext = clock[r + p.rebalBars];
+    const tNext = clock[r + d.rebalBars];
 
     // Rank candidates by momentum at tR.
     const cands = [];
     for (const s of loaded.series) {
       const i = lastIdxAtOrBefore(s.bars, tR);
       if (i < 0 || tR - s.bars[i].time > freshness) continue;
-      const sig = signalAt(s.bars, i, p);
+      const sig = signalAt(s.bars, i, d);
       if (!sig || !Number.isFinite(sig.mom)) continue;
       const j = lastIdxAtOrBefore(s.bars, tNext);
       if (j <= i) continue;
@@ -240,12 +268,13 @@ export function simulateMomentum(loaded, params, range = {}) {
 function latestHoldings(loaded, p) {
   const clock = loaded.clock;
   if (!clock.length) return [];
+  const d = deriveBars(clock, p);
   const tR = clock[clock.length - 1];
   const cands = [];
   for (const s of loaded.series) {
     const i = lastIdxAtOrBefore(s.bars, tR);
     if (i < 0) continue;
-    const sig = signalAt(s.bars, i, p);
+    const sig = signalAt(s.bars, i, d);
     if (!sig || !Number.isFinite(sig.mom)) continue;
     cands.push({ sym: s.sym, mom: sig.mom, vol: sig.vol });
   }
@@ -289,7 +318,8 @@ function annualize(periodsPerYear, retsPct) {
 export function momentumBacktest(loaded, params) {
   const sim = simulateMomentum(loaded, params);
   const rets = sim.periods.map((x) => x.ret);
-  const ppy = Math.round(252 / (params.rebalBars || MOMENTUM_DEFAULTS.rebalBars));
+  const d = deriveBars(loaded.clock, { ...MOMENTUM_DEFAULTS, ...params });
+  const ppy = Math.max(1, Math.round(d.barsPerYear / d.rebalBars)); // ≈12 (monthly), any frequency
   return {
     periods: sim.periods,
     monthlyReturns: rets,
@@ -304,14 +334,15 @@ export function momentumBacktest(loaded, params) {
 // out-of-sample track record.
 export function momentumWalkForward(loaded, cfg = {}) {
   const base = { ...MOMENTUM_DEFAULTS, ...cfg };
-  const lookbacks = cfg.lookbacks || [126, 189, 252];
+  const lookbackMonthsGrid = cfg.lookbackMonthsGrid || [6, 9, 12];
   const topKs = cfg.topKs || [10, 20, 30];
-  const ppy = Math.round(252 / base.rebalBars);
-  const grid = [];
-  for (const lb of lookbacks) for (const k of topKs) grid.push({ ...base, lookbackBars: lb, topK: k });
-
   const clock = loaded.clock;
-  if (clock.length < 400) return { error: 'insufficient_history', oosReturns: [], folds: [] };
+  const d0 = deriveBars(clock, base);
+  const ppy = Math.max(1, Math.round(d0.barsPerYear / d0.rebalBars));
+  const grid = [];
+  for (const lm of lookbackMonthsGrid) for (const k of topKs) grid.push({ ...base, lookbackMonths: lm, topK: k });
+
+  if (clock.length < 60) return { error: 'insufficient_history', oosReturns: [], folds: [] };
   const tMin = clock[0];
   const tMax = clock[clock.length - 1];
   const trainSec = (cfg.trainDays || 730) * DAY; // ~3y train
@@ -341,7 +372,7 @@ export function momentumWalkForward(loaded, cfg = {}) {
         trainFrom,
         trainTo,
         testTo,
-        lookbackBars: best.params.lookbackBars,
+        lookbackMonths: best.params.lookbackMonths,
         topK: best.params.topK,
         trainSharpe: best.sharpe,
         nTest: testRets.length,
@@ -353,7 +384,7 @@ export function momentumWalkForward(loaded, cfg = {}) {
   }
 
   return {
-    grid: { lookbacks, topKs },
+    grid: { lookbackMonths: lookbackMonthsGrid, topKs },
     trainDays: cfg.trainDays || 730,
     testDays: cfg.testDays || 365,
     folds,
@@ -374,15 +405,26 @@ export async function runMomentum(provider, cfg = {}) {
   }
   const direct = momentumBacktest(loaded, params);
   const wf = momentumWalkForward(loaded, params);
+  // Data-frequency diagnostics — so daily vs weekly bars are visible, not silent.
+  const d = deriveBars(loaded.clock, params);
+  const spacingDays = d.barsPerYear > 0 ? +(365.25 / d.barsPerYear).toFixed(1) : null;
   return {
     config: {
       universe: key,
-      lookbackBars: params.lookbackBars,
-      skipBars: params.skipBars,
-      rebalBars: params.rebalBars,
+      lookbackMonths: params.lookbackMonths,
+      skipMonths: params.skipMonths,
+      rebalMonths: params.rebalMonths,
       topK: params.topK,
       weighting: params.weighting,
       volTargetAnnual: params.volTargetAnnual,
+    },
+    data: {
+      bars: loaded.clock.length,
+      barsPerYear: Math.round(d.barsPerYear),
+      spacingDays, // ~1 = daily, ~7 = weekly
+      frequency: spacingDays == null ? 'unknown' : spacingDays <= 3 ? 'daily' : spacingDays <= 10 ? 'weekly' : 'coarse',
+      lookbackBars: d.lookbackBars,
+      rebalBars: d.rebalBars,
     },
     costs: params.costs || DEFAULT_COSTS,
     universe: { key, label: universeLabel(key), symbolsRequested: symbols.length, symbolsWithData: loaded.series.length },
