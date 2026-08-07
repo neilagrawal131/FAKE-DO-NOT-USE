@@ -9,6 +9,7 @@
     "dev": "node --watch-path=./server --watch-path=./public server/index.js",
     "check": "node scripts/check-data.mjs",
     "momentum": "node scripts/momentum.mjs",
+    "micro": "node scripts/microstructure.mjs",
     "backfill": "node scripts/backfill.mjs",
     "postinstall": "node scripts/vendor.js"
   },
